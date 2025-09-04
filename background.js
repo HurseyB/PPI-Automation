@@ -25,7 +25,9 @@ class AutomationManager {
       enableRetries: true,
       pauseOnError: false
     };
-    this.backgroundDocumentManager = new BackgroundDocumentManager();
+    this.tabAutomations = new Map(); // tabId -> automation state
+    this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
+    this.tabCompanyNames = new Map(); // tabId -> company name
     this.initializeBackground();
   }
 
@@ -149,15 +151,30 @@ class AutomationManager {
           sendResponse({ success: permissionGranted });
           break;
         case 'get-document-data':
-          // Provide document data to popup
-          const documentData = this.backgroundDocumentManager.getDocumentData();
-          sendResponse(documentData);
-          break;
+            // Use tab-specific document data if tabId provided
+            const requestedTabId = message.tabId || this.currentTabId;
+            const documentData = await this.getTabDocumentData(requestedTabId);
+            sendResponse(documentData);
+            break;
         case 'clear-background-document':
-          // Clear background document
-          this.backgroundDocumentManager.clearDocument();
-          sendResponse({ success: true });
-          break;
+            const clearTabId = message.tabId || this.currentTabId;
+            const clearManager = this.getTabDocumentManager(clearTabId);
+            clearManager.clearDocument();
+            sendResponse({ success: true });
+            break;
+        case 'set-tab-company-name':
+            await this.setTabCompanyName(message.tabId, message.companyName);
+            sendResponse({ success: true });
+            break;
+        case 'get-tab-document-data':
+            const tabDocumentData = await this.getTabDocumentData(message.tabId);
+            sendResponse(tabDocumentData);
+            break;
+        case 'clear-tab-document':
+            const manager = this.getTabDocumentManager(message.tabId);
+            manager.clearDocument();
+            sendResponse({ success: true });
+            break;
         default:
           this.logError('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -168,51 +185,72 @@ class AutomationManager {
     }
   }
 
-  async startAutomation(prompts, tabId) {
-    if (this.isRunning) {
-      throw new Error('Automation is already running');
-    }
+  async startAutomation(prompts, tabId, companyName = '') {
+      // Check if this specific tab is already running
+      if (this.tabAutomations.has(tabId) && this.tabAutomations.get(tabId).isRunning) {
+          throw new Error(`Automation is already running on tab ${tabId}`);
+      }
 
-    if (!prompts || prompts.length === 0) {
-      throw new Error('No prompts provided');
-    }
+      if (!prompts || prompts.length === 0) {
+          throw new Error('No prompts provided');
+      }
 
-    // Validate tab
-    const isValid = await this.validateTab(tabId);
-    if (!isValid) {
-      throw new Error('Invalid tab or not on Perplexity.ai');
-    }
+      // Validate tab
+      const isValid = await this.validateTab(tabId);
+      if (!isValid) {
+          throw new Error('Invalid tab or not on Perplexity.ai');
+      }
 
-    // Initialize automation state
-    this.isRunning = true;
-    this.isPaused = false;
-    this.currentTabId = tabId;
-    this.prompts = [...prompts];
-    this.currentPromptIndex = 0;
-    this.automationId = Date.now();
-    this.processedResults = [];
-    this.retryAttempts.clear();
-    this.completedPrompts.clear();
-    this.isProcessingPrompt = false;
+      // Store company name for this tab
+      await this.setTabCompanyName(tabId, companyName);
 
-    this.log(`Starting automation with ${prompts.length} prompts on tab ${tabId}`);
+      // Initialize per-tab automation state
+      const tabState = {
+          isRunning: true,
+          isPaused: false,
+          prompts: [...prompts],
+          currentPromptIndex: 0,
+          automationId: Date.now(),
+          processedResults: [],
+          retryAttempts: new Map(),
+          completedPrompts: new Set(),
+          isProcessingPrompt: false
+      };
 
-    // Save automation state
-    await this.saveAutomationState();
+      this.tabAutomations.set(tabId, tabState);
 
-    // Initialize background document collection
-    this.backgroundDocumentManager.initializeDocument(this.prompts.length);
+      // Update global state for backward compatibility (use most recent tab)
+      this.isRunning = true;
+      this.isPaused = false;
+      this.currentTabId = tabId;
+      this.prompts = [...prompts];
+      this.currentPromptIndex = 0;
+      this.automationId = tabState.automationId;
+      this.processedResults = [];
+      this.retryAttempts = new Map();
+      this.completedPrompts = new Set();
+      this.isProcessingPrompt = false;
 
-    // Notify popup of start
-    await this.sendMessageToPopup('automation-started', {
-      total: this.prompts.length,
-      tabId: this.currentTabId,
-      automationId: this.automationId
-    });
+      this.log(`Starting automation with ${prompts.length} prompts on tab ${tabId} for company: ${companyName || 'Company'}`);
 
-    // Start processing prompts
-    await this.processNextPrompt();
+      // Initialize per-tab document collection
+      const documentManager = this.getTabDocumentManager(tabId);
+      documentManager.initializeDocument(prompts.length);
+
+      // Save automation state
+      await this.saveAutomationState();
+
+      // Notify popup of start
+      await this.sendMessageToPopup('automation-started', {
+          total: prompts.length,
+          tabId: tabId,
+          automationId: tabState.automationId
+      });
+
+      // Start processing prompts
+      await this.processNextPrompt();
   }
+
 
   async stopAutomation() {
     if (!this.isRunning) {
@@ -400,11 +438,14 @@ class AutomationManager {
 
     // NEW: Add response to background document manager
     if (result.response && result.response.length > 0) {
-        this.backgroundDocumentManager.addResponse(idx, this.prompts[idx], result.response);
+        const documentManager = this.getTabDocumentManager(this.currentTabId);
+        documentManager.addResponse(idx, this.prompts[idx], result.response);
+
 
         // Notify popup about document update (if popup is open)
+        const docMgr = this.getTabDocumentManager(this.currentTabId);
         await this.sendMessageToPopup('document-updated', {
-            responseCount: this.backgroundDocumentManager.getResponseCount(),
+            responseCount: docMgr.getResponseCount(),
             status: 'collecting',
             message: 'Collecting responses...'
         });
@@ -561,7 +602,8 @@ class AutomationManager {
     const summary = this.generateAutomationSummary();
 
     // Finalize background document
-    this.backgroundDocumentManager.finalizeDocument(summary);
+    const documentManager = this.getTabDocumentManager(this.currentTabId);
+    documentManager.finalizeDocument(summary);
 
     // Clear automation state
     await this.clearAutomationState();
@@ -619,8 +661,7 @@ class AutomationManager {
         title: 'Perplexity AI Automator - Complete!',
         message: `✅ Processed ${summary.successful}/${summary.total} prompts successfully (${summary.successRate}% success rate)`,
         contextMessage: `${summary.withResponses} responses collected • Completed in ${this.formatDuration(summary.duration)}`,
-        priority: 1,
-        requireInteraction: false
+        priority: 1
       });
 
       // Set up notification click handler
@@ -859,13 +900,16 @@ class AutomationManager {
   }
 
   async handleTabRemoved(tabId) {
-    if (this.isRunning && tabId === this.currentTabId) {
-      this.log('Automation tab was closed');
-      await this.sendMessageToPopup('automation-error', {
-        error: 'Automation tab was closed'
-      });
-      await this.stopAutomation();
-    }
+      // Clean up per-tab state
+      this.cleanupTabState(tabId);
+
+      if (this.isRunning && tabId === this.currentTabId) {
+          this.log('Automation tab was closed');
+          await this.sendMessageToPopup('automation-error', {
+              error: 'Automation tab was closed'
+          });
+          await this.stopAutomation();
+      }
   }
 
   async validateTab(tabId) {
@@ -955,12 +999,12 @@ class AutomationManager {
 
       // Create the notification
       const notificationId = await browser.notifications.create({
-        type: 'basic',
+          type: 'basic',
         iconUrl: 'icons/icon-48.png',
         title: data.title || 'Perplexity AI Automator',
         message: data.message,
-        priority: data.notificationType === 'error' ? 2 : 1,
-        requireInteraction: data.notificationType === 'error'
+        priority: data.notificationType === 'error' ? 2 : 1
+        // Firefox does not support requireInteraction
       });
 
       this.log('Notification shown:', notificationId);
@@ -992,6 +1036,41 @@ class AutomationManager {
 
   logError(message, error) {
     console.error(`[Perplexity Automator Background ERROR] ${message}`, error);
+  }
+
+  // Per-tab company name management
+  async setTabCompanyName(tabId, companyName) {
+      this.tabCompanyNames.set(tabId, companyName || 'Company');
+      this.log(`Company name set for tab ${tabId}: ${companyName || 'Company'}`);
+  }
+
+  // Get per-tab document manager
+  getTabDocumentManager(tabId) {
+      if (!this.tabDocumentManagers.has(tabId)) {
+          const manager = new BackgroundDocumentManager();
+          manager.tabId = tabId; // Track which tab this belongs to
+          this.tabDocumentManagers.set(tabId, manager);
+      }
+      return this.tabDocumentManagers.get(tabId);
+  }
+
+  // Get per-tab document data
+  async getTabDocumentData(tabId) {
+      const manager = this.getTabDocumentManager(tabId);
+      const data = manager.getDocumentData();
+      // Include company name in response
+      return {
+          ...data,
+          companyName: this.tabCompanyNames.get(tabId) || 'Company'
+      };
+  }
+
+  // Clean up tab state when tab is removed
+  cleanupTabState(tabId) {
+      this.tabAutomations.delete(tabId);
+      this.tabDocumentManagers.delete(tabId);
+      this.tabCompanyNames.delete(tabId);
+      this.log(`Cleaned up state for tab ${tabId}`);
   }
 }
 

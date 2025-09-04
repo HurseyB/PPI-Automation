@@ -41,7 +41,25 @@ class PerplexityAutomator {
         this.documentManager.loadDocumentState().then(async () => {
             // Try to sync with background if no data locally
             if (!this.documentManager.hasResponses()) {
-                await this.documentManager.syncWithBackground();
+              // Sync only for current active tab
+              const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+              const response = await browser.runtime.sendMessage({
+                type: 'get-tab-document-data',
+                tabId: tab.id
+              });
+              if (response && response.document && response.document.responses.length > 0) {
+                this.documentManager.document = {
+                  ...response.document,
+                  responses: response.document.responses.map(bg => ({
+                    promptNumber: bg.index + 1,
+                    promptText: bg.prompt,
+                    responseText: bg.response,
+                    timestamp: bg.timestamp
+                  }))
+                };
+                this.documentManager.companyName = response.companyName || this.documentManager.companyName;
+                this.documentManager.saveDocumentState();
+              }
             }
 
             this.updateResponseCount();
@@ -59,10 +77,18 @@ class PerplexityAutomator {
         this.loadUIState().then(async state => {  // <- ADD 'async' HERE
             if (!state) return;
 
-            // Restore Company Name
-            if (state.companyName !== undefined && this.companyNameInput) {
-                this.companyNameInput.value = state.companyName;
-                this.documentManager.companyName = state.companyName;     // ← propagate to DocumentManager
+            // Retrieve tab-specific company name
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            const tabData = await browser.runtime.sendMessage({
+              type: 'get-tab-document-data',
+              tabId: tab.id
+            });
+            if (tabData && tabData.companyName) {
+              this.companyNameInput.value = tabData.companyName;
+              this.documentManager.companyName = tabData.companyName;
+            } else if (state.companyName !== undefined && this.companyNameInput) {
+              this.companyNameInput.value = state.companyName;
+              this.documentManager.companyName = state.companyName;
             }
 
             // Restore document data FIRST if it exists, but prioritize background sync
@@ -99,9 +125,15 @@ class PerplexityAutomator {
                 this.showProgressSection();
 
                 // Reconstruct progress bar
-                this.progressText.textContent = `${state.current} of ${state.total} completed`;
-                this.progressFill.style.width = `${state.percentage}%`;
-                this.currentPrompt.textContent = state.currentPromptText;
+                if (this.progressText) {
+                    this.progressText.textContent = `${state.current} of ${state.total} completed`;
+                }
+                if (this.progressFill) {
+                    this.progressFill.style.width = `${state.percentage}%`;
+                }
+                if (this.currentPrompt) {
+                    this.currentPrompt.textContent = state.currentPromptText;
+                }
 
                 // Restore document status and count
                 this.responseCount.textContent = state.responseCount;
@@ -231,11 +263,19 @@ class PerplexityAutomator {
       }
 
       // Document management events
-      this.downloadDocxBtn.addEventListener('click', () => {
+      this.downloadDocxBtn.addEventListener('click', async () => {
           // 1. Capture and store the company name before downloading
           const raw = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+          // Save per-tab company name
+          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+          await browser.runtime.sendMessage({
+            type: 'set-tab-company-name',
+            tabId: tab.id,
+            companyName: raw || 'Company'
+          });
           this.documentManager.companyName = raw || 'Company';
           this.documentManager.downloadDocx();
+
       });
       this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
@@ -327,9 +367,19 @@ class PerplexityAutomator {
         if (data.status === 'processing' && data.prompt) {
             this.updateDocumentStatus('collecting', `Processing ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
             this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
+            if (this.currentPrompt) {
+                if (this.currentPrompt) {
+                    this.currentPrompt.textContent =
+                    `Processing ${current}/${total}: ${data.prompt.substring(0,30)}...`;
+                }
+            }
         } else if (data.status === 'completed') {
             this.updateDocumentStatus('collecting', `Completed ${current}/${total} (${percentage}%)`);
             this.logMessage(`✓ Prompt ${current} completed successfully`);
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent =
+                `Completed ${current}/${total} (${percentage}%)`;
+            }
 
 
             // NEW: Response collection handled by background script, just update UI
@@ -338,19 +388,29 @@ class PerplexityAutomator {
             }
 
         } else if (data.status === 'failed') {
-            this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
+            if (this.currentPrompt) {
+                if (this.currentPrompt) {
+                    this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
+                }
+            }
             this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
         } else if (data.status === 'retrying') {
-            this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
+            }
             this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
         }
         const uiState = {
-          current: data.current,
-          total: data.total,
-          percentage,
-          currentPromptText: this.currentPrompt.textContent,
-          responseCount: this.documentManager.getResponseCount(),
-          documentStatus: this.documentStatus.textContent
+            current: data.current,
+            total: data.total,
+            percentage,
+            currentPromptText: this.currentPrompt
+                ? this.currentPrompt.textContent
+                : '',
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus
+            ? this.documentStatus.textContent
+            : ''
         };
         this.saveUIState(uiState);
     }
@@ -484,7 +544,11 @@ class PerplexityAutomator {
         if (confirm('Are you sure you want to clear the document? This will remove all collected responses.')) {
             // Clear background document as well
             try {
-                await browser.runtime.sendMessage({ type: 'clear-background-document' });
+                const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+                await browser.runtime.sendMessage({
+                  type: 'clear-tab-document',
+                  tabId: tab.id
+                });
             } catch (error) {
                 console.error('Failed to clear background document:', error);
             }
@@ -620,9 +684,10 @@ class PerplexityAutomator {
             });
 
             await browser.runtime.sendMessage({
-                type: 'start-automation',
-                prompts: promptsToSend,
-                tabId: tab.id
+              type: 'start-automation',
+              prompts: promptsToSend,
+              tabId: tab.id,
+              companyName: companyName || ''
             });
 
             this.updateAutomationButton();
@@ -984,23 +1049,23 @@ class DocumentManager {
             });
 
         // Add summary if available
-        if (this.document.summary) {
-            html += `
-                <div class="page-break">
-                    <h1>Summary</h1>
-                    <p><strong>Total Prompts:</strong> ${this.document.summary.total || this.document.responses.length}</p>
-            `;
+        //if (this.document.summary) {
+        //    html += `
+        //        <div class="page-break">
+        //            <h1>Summary</h1>
+        //            <p><strong>Total Prompts:</strong> ${this.document.summary.total || this.document.responses.length}</p>
+        //    `;
 
-            if (this.document.summary.successful !== undefined) {
-                html += `<p><strong>Successful:</strong> ${this.document.summary.successful}</p>`;
-            }
+        //    if (this.document.summary.successful !== undefined) {
+        //        html += `<p><strong>Successful:</strong> ${this.document.summary.successful}</p>`;
+        //    }
 
-            if (this.document.summary.successRate) {
-                html += `<p><strong>Success Rate:</strong> ${this.document.summary.successRate}%</p>`;
-            }
+        //    if (this.document.summary.successRate) {
+        //        html += `<p><strong>Success Rate:</strong> ${this.document.summary.successRate}%</p>`;
+        //    }
 
-            html += `</div>`;
-        }
+        //    html += `</div>`;
+        //}
 
         html += `</body></html>`;
         return html;
