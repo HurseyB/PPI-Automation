@@ -1,16 +1,45 @@
 /* Import base styles from popup.css */
 /* This file extends popup.css with page-specific styles */
+/* Center the entire UI horizontally */
+/* Center the entire UI horizontally */
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  /* you can also vertically center with align-items: center; if you wish */
+}
+
+
 
 /* Page Layout */
 .page-container {
-    min-height: 100vh;
-    background-color: var(--color-background);
+    flex: 0 0 auto;
+    /* Constrain the container itself to 800px, then center it */
+    max-width: 800px;
+    margin: 0 auto;              /* center the container horizontally */
+
+    /* Keep vertical stacking of its children */
     display: flex;
     flex-direction: column;
+    justify-content: flex-start; /* stack from the top */
+    gap: var(--space-32);         /* optional vertical spacing between header & main */
+
+    padding: var(--space-24);
+    background-color: var(--color-background);
+    min-height: 100vh;
 }
+
 
 /* Header Styles */
 .page-header {
+    display: flex;
+    justify-content: center;     /* center the inner .header-content */
+    width: 100%;
+    max-width: 800px;            /* match your main-content max-width */
+    margin: 0 auto;              /* ensure it stays centered */
     background-color: var(--color-surface);
     border-bottom: 2px solid var(--color-border);
     padding: var(--space-16) var(--space-24);
@@ -21,8 +50,10 @@
 }
 
 .header-content {
-    max-width: 1200px;
-    margin: 0 auto;
+    /* you can keep the 1200px max-width if you want a wider header inner,
+       or reduce it to 800px to match exactly. */
+    max-width: 800px;
+    width: 100%;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -52,11 +83,9 @@
 
 /* Main Content Layout */
 .main-content {
-    flex: 1;
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: var(--space-24);
     width: 100%;
+    max-width: 800px;           /* limit width on large screens */
+    margin: 0 auto;             /* fallback centering */
     display: flex;
     flex-direction: column;
     gap: var(--space-32);
@@ -64,6 +93,7 @@
 
 /* Add Prompt Section */
 .add-prompt-section {
+    width: 100%;
     background-color: var(--color-surface);
 }
 
@@ -411,8 +441,10 @@
 
     .header-content {
         flex-direction: column;
-        align-items: stretch;
+        align-items: center;               /* Center children */
         gap: var(--space-12);
+        max-width: 1200px;                 /* Maintain desktop max-width */
+        margin: 0 auto;                    /* Horizontally center */
     }
 
     .header-actions {
@@ -423,11 +455,14 @@
     .main-content {
         padding: var(--space-16);
         gap: var(--space-24);
+        max-width: 1200px;                 /* Maintain desktop max-width */
+        margin: 0 auto;                    /* Horizontally center */
     }
 
     .section-header {
         flex-direction: column;
-        align-items: stretch;
+        align-items: center;               /* Center children */
+        text-align: center;                /* Center text */
     }
 
     .section-actions {
@@ -458,22 +493,26 @@
 @media (max-width: 480px) {
     .page-title {
         font-size: var(--font-size-2xl);
+        text-align: center;                /* Center the header title */
     }
 
     .input-actions {
         flex-direction: column;
-        align-items: stretch;
+        align-items: center;               /* Center form controls */
+        gap: var(--space-8);                /* Preserve spacing */
     }
 
     .prompt-header {
         flex-wrap: wrap;
         gap: var(--space-8);
+        justify-content: center;           /* Center header content */
     }
 
     .prompt-preview {
         margin: var(--space-8) 0;
         order: 3;
         flex-basis: 100%;
+        text-align: center;                /* Center prompt text */
     }
 }
 
