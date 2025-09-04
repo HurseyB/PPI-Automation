@@ -124,14 +124,33 @@ class AutomationManager {
           sendResponse({ success: true });
           break;
         case 'get-automation-status':
-          sendResponse({
-            isRunning: this.isRunning,
-            isPaused: this.isPaused,
-            currentPromptIndex: this.currentPromptIndex,
-            totalPrompts: this.prompts.length,
-            processedResults: this.processedResults.length,
-            automationId: this.automationId
-          });
+          // NEW: Get tab-specific status if tabId provided
+          const statusTabId = message.tabId || this.currentTabId;
+          const tabState = statusTabId ? this.getTabState(statusTabId) : null;
+
+          if (tabState) {
+              // Return tab-specific status
+            sendResponse({
+              isRunning: tabState.isRunning,
+              isPaused: tabState.isPaused,
+              currentPromptIndex: tabState.currentPromptIndex,
+              totalPrompts: tabState.prompts.length,
+              processedResults: tabState.processedResults.length,
+              automationId: tabState.automationId,
+              tabId: statusTabId
+            });
+          } else {
+            // Fallback to global status for backward compatibility
+            sendResponse({
+              isRunning: this.isRunning,
+              isPaused: this.isPaused,
+              currentPromptIndex: this.currentPromptIndex,
+              totalPrompts: this.prompts.length,
+              processedResults: this.processedResults.length,
+              automationId: this.automationId,
+              tabId: null
+            });
+          }
           break;
         case 'get-results':
           sendResponse({

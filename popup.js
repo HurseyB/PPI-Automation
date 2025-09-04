@@ -611,14 +611,20 @@ class PerplexityAutomator {
 
     async updateAutomationButton() {
         try {
+            // Get current tab to check tab-specific automation status
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
             // Get current automation status from background
             const response = await browser.runtime.sendMessage({
-                type: 'get-automation-status'
+                type: 'get-automation-status',
+                tabId: tab.id
             });
 
             const status = response || {};
 
-            if (status.isRunning) {
+            // Check if THIS TAB has running automation (not global)
+            const isThisTabRunning = status.tabId === tab.id && status.isRunning;
+
+            if (isThisTabRunning) {
                 this.startAutomationBtn.disabled = true;
                 this.stopAutomationBtn.disabled = false;
 
@@ -634,7 +640,7 @@ class PerplexityAutomator {
                     this.resumeAutomationBtn.style.display = 'none';
                 }
             } else {
-                // Not running - show only start button
+                // This tab is not running - enable start button
                 this.startAutomationBtn.disabled = false;
                 this.stopAutomationBtn.disabled = true;
                 this.pauseAutomationBtn.style.display = 'none';
@@ -642,9 +648,9 @@ class PerplexityAutomator {
             }
         } catch (error) {
             this.logError('Failed to update button states:', error);
-            // Fallback to basic state if status check fails
-            this.startAutomationBtn.disabled = this.isRunning;
-            this.stopAutomationBtn.disabled = !this.isRunning;
+            // Enable start button by default on error
+            this.startAutomationBtn.disabled = false;
+            this.stopAutomationBtn.disabled = true;
             this.pauseAutomationBtn.style.display = 'none';
             this.resumeAutomationBtn.style.display = 'none';
         }
