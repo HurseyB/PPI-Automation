@@ -830,10 +830,40 @@ class AutomationManager {
       summary: summary,
       automationId: tabState.automationId
     });
+
+    // ✅ Schedule automatic cleanup of this automation’s data after 5 minutes
+    this.scheduleAutomationCleanup(tabId, tabState.automationId);
     await this.showCompletionNotification(summary);
 
     // Update overlay status
     await this.updateStatusOverlay(tabId, 'complete', 'Analyses Complete');
+  }
+
+  /**
+   * Schedule cleanup of tab state and stored results after delay
+   */
+  scheduleAutomationCleanup(tabId, automationId, delayMs = 5 * 60 * 1000) {
+    setTimeout(async () => {
+      // Clear in-memory tab state
+      this.cleanupTabState(tabId);
+
+      // Remove storage keys for this automation
+      try {
+        // Remove automation summary
+        await browser.storage.local.remove(`automation_${automationId}`);
+        // Remove per-prompt results
+        const allKeys = Object.keys(await browser.storage.local.get());
+        const keysToRemove = allKeys.filter(key =>
+          key.startsWith(`promptResult_${automationId}_`)
+        );
+        if (keysToRemove.length) {
+          await browser.storage.local.remove(keysToRemove);
+        }
+        this.log(`Scheduled cleanup complete for automation ${automationId}`);
+      } catch (err) {
+        this.logError(`Error during scheduled cleanup for ${automationId}:`, err);
+      }
+    }, delayMs);
   }
 
   generateAutomationSummary(tabId) {
