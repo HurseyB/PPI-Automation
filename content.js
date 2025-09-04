@@ -294,17 +294,38 @@ class PerplexityAutomator {
     }
 
     async clickSubmit(button) {
-        try {
-            if (!this.isVisibleAndInteractive(button)) throw new Error('Submit button is not clickable');
-            button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await this.sleep(200);
-            button.click();
-            this.log('Submit button clicked');
-        } catch (error) {
-            this.logError('Failed to click submit button:', error);
-            throw new Error('Submit click failed: ' + error.message);
+      try {
+        if (!this.isVisibleAndInteractive(button)) {
+          throw new Error('Submit button is not clickable');
         }
+
+        button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await this.sleep(200);
+
+        // Dispatch real mousedown/mouseup events
+        const rect = button.getBoundingClientRect();
+        const clientX = rect.left + rect.width / 2;
+        const clientY = rect.top + rect.height / 2;
+
+        ['mousedown', 'mouseup', 'click'].forEach(type => {
+          const event = new MouseEvent(type, {
+            view: window,
+            bubbles: true,
+            cancelable: true,
+            clientX,
+            clientY,
+            button: 0
+          });
+          button.dispatchEvent(event);
+        });
+
+        this.log('Submit button clicked via MouseEvent');
+      } catch (error) {
+        this.logError('Failed to click submit button:', error);
+        throw new Error('Submit click failed: ' + error.message);
+      }
     }
+
 
     isVisibleAndInteractive(element) {
         if (!element) return false;
