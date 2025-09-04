@@ -528,7 +528,31 @@ class DocumentManager {
     }
 
     downloadDocx() {
-      browser.runtime.sendMessage({ type: 'export-results', format: 'docx' });
+        try {
+            // Generate RTF content (can be opened as DOCX by Word)
+            const content = this.generateRichTextDocument();
+            const filename = `perplexity_automation_${Date.now()}.rtf`;
+
+            // Create blob and download
+            const blob = new Blob([content], { type: 'application/rtf' });
+            const url = URL.createObjectURL(blob);
+
+            // Create a temporary download link
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            // Clean up
+            URL.revokeObjectURL(url);
+
+            console.log('RTF document downloaded successfully');
+        } catch (error) {
+            console.error('Failed to download RTF document:', error);
+        }
     }
 
     generateRichTextDocument() {
