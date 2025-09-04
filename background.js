@@ -12,7 +12,6 @@ class AutomationManager {
         this.currentPromptIndex = 0;
         this.automationId = null;
         this.processedResults = [];
-        this.currentTimeout = null;
         this.retryAttempts = new Map();
         this.isProcessingPrompt = false;
         this.completedPrompts = new Set();
@@ -28,6 +27,7 @@ class AutomationManager {
         this.tabAutomations = new Map(); // tabId -> automation state
         this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
         this.tabCompanyNames = new Map(); // tabId -> company name
+        this.tabTimeouts = new Map(); // tabId -> timeout reference
         this.initializeBackground();
     }
 
@@ -106,7 +106,7 @@ class AutomationManager {
           await this.startAutomation(message.prompts, message.tabId);
           sendResponse({ success: true });
           break;
-        case 'stop-automation':
+        case 'reset-automation':
           // Stop all running automations or specific tab
           await this.stopAutomation(message.tabId);
           sendResponse({ success: true });
@@ -265,7 +265,8 @@ class AutomationManager {
           processedResults: [],
           retryAttempts: new Map(),
           completedPrompts: new Set(),
-          isProcessingPrompt: false
+          isProcessingPrompt: false,
+          currentTimeout: null
       };
 
       this.tabAutomations.set(tabId, tabState);
@@ -331,8 +332,8 @@ class AutomationManager {
     // Update global state
     this.isRunning = this.hasRunningAutomation();
 
-    // Clear any pending timeouts
-    this.clearCurrentTimeout();
+    // // Clear tab-specific timeout
+    this.clearCurrentTimeout(tabId);
 
     // Notify content script to stop
       try {
@@ -345,8 +346,8 @@ class AutomationManager {
 
     // Save final results
     await this.saveFinalResults(tabId);
-    // Clear automation state
-    await this.clearAutomationState();
+    // // Clear tab-specific automation state only
+    await this.clearAutomationState(tabId);
 
     // Notify popup
     await this.sendMessageToPopup('automation-stopped', {
@@ -364,7 +365,8 @@ class AutomationManager {
     }
 
     this.updateTabState(tabId, { isPaused: true });
-    this.clearCurrentTimeout();
+    this.clearTabTimeout(tabId);
+
     this.log(`Automation paused on tab ${tabId}`);
     await this.saveAutomationState();
     await this.sendMessageToPopup('automation-paused', {
@@ -456,10 +458,11 @@ class AutomationManager {
         automationId: tabState.automationId
       });
 
-      // Set timeout for prompt execution (longer timeout)
-      this.currentTimeout = setTimeout(() => {
+      // Set tab-specific timeout for prompt execution
+      this.setTabTimeout(tabId, () => {
         this.handlePromptTimeout(tabId);
       }, this.settings.timeout);
+
 
     } catch (error) {
       this.logError('Failed to send prompt to content script:', error);
@@ -491,8 +494,8 @@ class AutomationManager {
     tabState.completedPrompts.add(idx);
     this.log(`Prompt ${promptNumber} completed successfully`);
 
-    // Clear timeout and processing flag
-    this.clearCurrentTimeout();
+    // Clear tab-specific timeout and processing flag
+    this.clearTabTimeout(tabId);
     this.updateTabState(tabId, { isProcessingPrompt: false });
 
     // Process and store result using the idx
@@ -547,13 +550,13 @@ class AutomationManager {
 
     // Wait before next prompt or complete
     if (tabState.currentPromptIndex < tabState.prompts.length) {
-        this.currentTimeout = setTimeout(() => {
-            if (tabState.isRunning && !tabState.isPaused) {
-                this.processNextPrompt(tabId);
-            }
-        }, this.settings.delay);
+      this.setTabTimeout(tabId, () => {
+        if (tabState.isRunning && !tabState.isPaused) {
+          this.processNextPrompt(tabId);
+        }
+      }, this.settings.delay);
     } else {
-        await this.completeAutomation(tabId);
+      await this.completeAutomation(tabId);
     }
   }
 
@@ -576,8 +579,9 @@ class AutomationManager {
     
     this.logError(`Prompt ${promptNumber} failed:`, error);
     
-    // Clear timeout and processing flag
-    this.clearCurrentTimeout();
+    // Clear tab-specific timeout and processing flag
+    this.clearTabTimeout(tabId);
+
     this.updateTabState(tabId, { isProcessingPrompt: false });
 
     // Get current retry count for this specific prompt
@@ -603,11 +607,11 @@ class AutomationManager {
       });
 
       // Wait longer before retry (don't increment currentPromptIndex)
-      this.currentTimeout = setTimeout(() => {
-        if (tabState.isRunning && !tabState.isPaused) {
-          this.processNextPrompt(tabId); // Retry same prompt
-        }
-      }, this.settings.retryDelay);
+        this.setTabTimeout(tabId, () => {
+          if (tabState.isRunning && !tabState.isPaused) {
+            this.processNextPrompt(tabId); // Retry same prompt
+          }
+        }, this.settings.retryDelay);
 
     } else {
       // Mark this prompt as completed (failed)
@@ -652,7 +656,7 @@ class AutomationManager {
         tabState.retryAttempts.delete(actualIndex);
         await this.saveAutomationState();
         
-        this.currentTimeout = setTimeout(() => {
+        this.setTabTimeout(tabId, () => {
           if (tabState.isRunning && !tabState.isPaused) {
             this.processNextPrompt(tabId);
           }
@@ -986,10 +990,37 @@ class AutomationManager {
     return content;
   }
 
-  clearCurrentTimeout() {
-    if (this.currentTimeout) {
-      clearTimeout(this.currentTimeout);
-      this.currentTimeout = null;
+  // Tab-specific timeout management
+  setTabTimeout(tabId, callback, delay) {
+    // Clear any existing timeout for this tab
+    this.clearTabTimeout(tabId);
+
+    // Set new timeout
+    const timeoutId = setTimeout(callback, delay);
+    this.tabTimeouts.set(tabId, timeoutId);
+
+    return timeoutId;
+  }
+
+  clearTabTimeout(tabId) {
+    const timeoutId = this.tabTimeouts.get(tabId);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this.tabTimeouts.delete(tabId);
+    }
+  }
+
+  // Clear tab-specific automation state
+  async clearTabAutomationState(tabId) {
+    try {
+      // Only clear state for this specific tab
+      const tabState = this.getTabState(tabId);
+      if (tabState) {
+        await browser.storage.local.remove(`tabAutomationState_${tabId}`);
+        this.log(`Tab ${tabId} automation state cleared`);
+      }
+    } catch (error) {
+      this.logError(`Failed to clear tab ${tabId} automation state:`, error);
     }
   }
 
@@ -1191,10 +1222,12 @@ class AutomationManager {
 
   // Clean up tab state when tab is removed
   cleanupTabState(tabId) {
-      this.tabAutomations.delete(tabId);
-      this.tabDocumentManagers.delete(tabId);
-      this.tabCompanyNames.delete(tabId);
-      this.log(`Cleaned up state for tab ${tabId}`);
+    this.clearTabTimeout(tabId);
+    this.tabAutomations.delete(tabId);
+    this.tabDocumentManagers.delete(tabId);
+    this.tabCompanyNames.delete(tabId);
+    this.tabTimeouts.delete(tabId);
+    this.log(`Cleaned up state for tab ${tabId}`);
   }
 }
 

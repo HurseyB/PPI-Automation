@@ -185,7 +185,8 @@ class PerplexityAutomator {
       this.startAutomationBtn = document.getElementById('startAutomationBtn');
       this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
       this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
-      this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
+      this.resetAutomationBtn = document.getElementById('resetAutomationBtn');
+      this.runningControls = document.querySelector('.running-controls');
       this.companyNameInput = document.getElementById('companyNameInput');
 
       // Progress elements (these don't exist in popup, but needed for compatibility)
@@ -197,6 +198,13 @@ class PerplexityAutomator {
       // Initialize notification elements
       this.enableNotifications = document.getElementById('enableNotifications');
 
+      // Log missing elements for debugging
+        if (!this.resetAutomationBtn) {
+          console.warn('resetAutomationBtn element not found in DOM');
+        }
+        if (!this.runningControls) {
+          console.warn('runningControls element not found in DOM');
+        }
     }
 
 
@@ -290,7 +298,7 @@ class PerplexityAutomator {
       this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
       this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
       this.resumeAutomationBtn.addEventListener('click', () => this.resumeAutomation());
-      this.stopAutomationBtn.addEventListener('click', () => this.stopAutomation());
+      this.resetAutomationBtn.addEventListener('click', () => this.resetAutomation());
 
       // Notification settings
       if (this.enableNotifications) {
@@ -351,7 +359,6 @@ class PerplexityAutomator {
 
     handleAutomationStarted(data) {
         this.isRunning = true;
-        this.showProgressSection();
         this.updateAutomationButton();
 
         // Show progress info using document status
@@ -366,154 +373,177 @@ class PerplexityAutomator {
 
 
     handleProgressUpdate(data) {
-        const current = data.current;
-        const total = data.total;
+      const current = data.current;
+      const total = data.total;
 
-        // Update document status to show progress
-        const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
-        if (data.status === 'processing' && data.prompt) {
-            this.updateDocumentStatus('collecting', `Processing ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
-            this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
-            if (this.currentPrompt) {
-                if (this.currentPrompt) {
-                    this.currentPrompt.textContent =
-                    `Processing ${current}/${total}: ${data.prompt.substring(0,30)}...`;
-                }
-            }
-        } else if (data.status === 'completed') {
-            this.updateDocumentStatus('collecting', `Completed ${current}/${total} (${percentage}%)`);
-            this.logMessage(`✓ Prompt ${current} completed successfully`);
-            if (this.currentPrompt) {
-                this.currentPrompt.textContent =
-                `Completed ${current}/${total} (${percentage}%)`;
-            }
+      // Update document status to show progress
+      const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
 
+      if (data.status === 'processing' && data.prompt) {
+        this.updateDocumentStatus('collecting', `Processing ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
+        this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
 
-            // NEW: Response collection handled by background script, just update UI
-            if (data.response && data.prompt) {
-                this.updateResponseCount();
-            }
-
-        } else if (data.status === 'failed') {
-            if (this.currentPrompt) {
-                if (this.currentPrompt) {
-                    this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
-                }
-            }
-            this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
-        } else if (data.status === 'retrying') {
-            if (this.currentPrompt) {
-                this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
-            }
-            this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+          this.currentPrompt.textContent = `Processing ${current}/${total}: ${data.prompt.substring(0,30)}...`;
         }
-        const uiState = {
-            current: data.current,
-            total: data.total,
-            percentage,
-            currentPromptText: this.currentPrompt
-                ? this.currentPrompt.textContent
-                : '',
-            responseCount: this.documentManager.getResponseCount(),
-            documentStatus: this.documentStatus
-            ? this.documentStatus.textContent
-            : ''
-        };
-        this.saveUIState(uiState);
+      } else if (data.status === 'completed') {
+        this.updateDocumentStatus('collecting', `Completed ${current}/${total} (${percentage}%)`);
+        this.logMessage(`✓ Prompt ${current} completed successfully`);
+
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+          this.currentPrompt.textContent = `Completed ${current}/${total} (${percentage}%)`;
+        }
+
+        // NEW: Response collection handled by background script, just update UI
+        if (data.response && data.prompt) {
+          this.updateResponseCount();
+        }
+      } else if (data.status === 'failed') {
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+          this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
+        }
+        this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
+      } else if (data.status === 'retrying') {
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+          this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
+        }
+        this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
+      }
+
+      const uiState = {
+        current: data.current,
+        total: data.total,
+        percentage,
+        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+        responseCount: this.documentManager.getResponseCount(),
+        documentStatus: this.documentStatus ? this.documentStatus.textContent : ''
+      };
+      this.saveUIState(uiState);
     }
+
 
     handleAutomationComplete(data) {
-        this.isRunning = false;
-        this.updateAutomationButton();
+      this.isRunning = false;
+      this.updateAutomationButton();
+
+      // NULL-SAFE: Check if currentPrompt exists before using it
+      if (this.currentPrompt) {
         this.currentPrompt.textContent = `Automation completed! ${data.completed}/${data.total} prompts processed`;
-        this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
-        
-        if (data.summary) {
-            this.logMessage(`Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
-        }
+      }
 
-        // NEW: Finalize document
-        this.documentManager.finalizeDocument(data.summary);
-        this.updateDocumentStatus('ready', 'Document ready for download');
-        this.enableDownloadButtons();
-        
-        // Persist final state
-        this.saveUIState({
-          current: data.completed,
-          total: data.total,
-          percentage: Math.round((data.completed/data.total)*100),
-          currentPromptText: this.currentPrompt.textContent,
-          responseCount: this.documentManager.getResponseCount(),
-          documentStatus: this.documentStatus.textContent
-        });
+      this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
 
+      if (data.summary) {
+        this.logMessage(`Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
+      }
+
+      // NEW: Finalize document
+      this.documentManager.finalizeDocument(data.summary);
+      this.updateDocumentStatus('ready', 'Document ready for download');
+      this.enableDownloadButtons();
+
+      // Persist final state
+      this.saveUIState({
+        current: data.completed,
+        total: data.total,
+        percentage: Math.round((data.completed/data.total) * 100),
+        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+        responseCount: this.documentManager.getResponseCount(),
+        documentStatus: this.documentStatus.textContent
+      });
     }
+
 
     handleAutomationStopped(data) {
-        this.isRunning = false;
-        this.updateAutomationButton();
+      this.isRunning = false;
+      this.updateAutomationButton();
+
+      // NULL-SAFE: Check if currentPrompt exists before using it
+      if (this.currentPrompt) {
         this.currentPrompt.textContent = 'Automation stopped';
-        this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
-        
-        // NEW: Partial document available
-        if (this.documentManager.hasResponses()) {
-            this.updateDocumentStatus('partial', 'Partial document available');
-            this.enableDownloadButtons();
-        }
+      }
 
-        // Persist final state
-         this.saveUIState({
-          current: data.completed,
-          total: data.total,
-          percentage: Math.round((data.completed/data.total)*100),
-          currentPromptText: this.currentPrompt.textContent,
-          responseCount: this.documentManager.getResponseCount(),
-          documentStatus: this.documentStatus.textContent
-        });
+      this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
 
+      // NEW: Partial document available
+      if (this.documentManager.hasResponses()) {
+        this.updateDocumentStatus('partial', 'Partial document available');
+        this.enableDownloadButtons();
+      }
+
+      // Persist final state
+      this.saveUIState({
+        current: data.completed,
+        total: data.total,
+        percentage: Math.round((data.completed/data.total)*100),
+        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+        responseCount: this.documentManager.getResponseCount(),
+        documentStatus: this.documentStatus.textContent
+      });
     }
+
 
     handleAutomationError(data) {
-        this.isRunning = false;
-        this.updateAutomationButton();
+      this.isRunning = false;
+      this.updateAutomationButton();
+
+      // NULL-SAFE: Check if currentPrompt exists before using it
+      if (this.currentPrompt) {
         this.currentPrompt.textContent = 'Automation error occurred';
-        this.logMessage(`❌ Error: ${data.error || 'Unknown error occurred'}`);
-        this.showNotification('Automation error: ' + (data.error || 'Unknown error'), 'error');
+      }
+
+      this.logMessage(`❌ Error: ${data.error || 'Unknown error occurred'}`);
+      this.showNotification('Automation error: ' + (data.error || 'Unknown error'), 'error');
     }
+
 
     handleAutomationPaused(data) {
+      // NULL-SAFE: Check if currentPrompt exists before using it
+      if (this.currentPrompt) {
         this.currentPrompt.textContent = 'Automation paused';
-        this.logMessage(`⏸️ Automation paused at prompt ${data.currentIndex + 1}/${data.total}`);
-        this.updateAutomationButton(); // This will show/hide correct buttons based on state
+      }
 
-        // Save paused state
-        this.saveUIState({
-            current: data.currentIndex,
-            total: data.total,
-            percentage: Math.round((data.currentIndex / data.total) * 100),
-            currentPromptText: this.currentPrompt.textContent,
-            responseCount: this.documentManager.getResponseCount(),
-            documentStatus: this.documentStatus.textContent,
-            isPaused: true
-        });
+      this.logMessage(`⏸️ Automation paused at prompt ${data.currentIndex + 1}/${data.total}`);
+      this.updateAutomationButton(); // This will show/hide correct buttons based on state
+
+      // Save paused state
+      this.saveUIState({
+        current: data.currentIndex,
+        total: data.total,
+        percentage: Math.round((data.currentIndex / data.total) * 100),
+        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+        responseCount: this.documentManager.getResponseCount(),
+        documentStatus: this.documentStatus.textContent,
+        isPaused: true
+      });
     }
+
 
     handleAutomationResumed(data) {
+      // NULL-SAFE: Check if currentPrompt exists before using it
+      if (this.currentPrompt) {
         this.currentPrompt.textContent = `Resuming automation...`;
-        this.logMessage(`▶️ Automation resumed from prompt ${data.currentIndex + 1}/${data.total}`);
-        this.updateAutomationButton();
+      }
 
-        // Save resumed state
-        this.saveUIState({
-            current: data.currentIndex,
-            total: data.total,
-            percentage: Math.round((data.currentIndex / data.total) * 100),
-            currentPromptText: this.currentPrompt.textContent,
-            responseCount: this.documentManager.getResponseCount(),
-            documentStatus: this.documentStatus.textContent,
-            isPaused: false
-        });
+      this.logMessage(`▶️ Automation resumed from prompt ${data.currentIndex + 1}/${data.total}`);
+      this.updateAutomationButton();
+
+      // Save resumed state
+      this.saveUIState({
+        current: data.currentIndex,
+        total: data.total,
+        percentage: Math.round((data.currentIndex / data.total) * 100),
+        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+        responseCount: this.documentManager.getResponseCount(),
+        documentStatus: this.documentStatus.textContent,
+        isPaused: false
+      });
     }
+
 
 
     // NEW: Handle document update notifications
@@ -570,11 +600,6 @@ class PerplexityAutomator {
 
     // Progress section methods (compatibility for popup-only interface)
     showProgressSection() {
-        // Show automation control buttons
-        this.pauseAutomationBtn.style.display = 'none';
-        this.resumeAutomationBtn.style.display = 'none';
-        this.stopAutomationBtn.style.display = 'none';
-
         // Update button states
         this.updateAutomationButton();
     }
@@ -616,54 +641,78 @@ class PerplexityAutomator {
     }
 
     async updateAutomationButton() {
-        try {
-            // Get current tab to check tab-specific automation status
-            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-            // Get current automation status from background
-            const response = await browser.runtime.sendMessage({
-                type: 'get-automation-status',
-                tabId: tab.id
-            });
+      try {
+        // Get current tab to check tab-specific automation status
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
 
-            const status = response || {};
+        // Get current automation status from background
+        const response = await browser.runtime.sendMessage({
+          type: 'get-automation-status',
+          tabId: tab.id
+        });
+        const status = response || {};
 
-            // Check if THIS TAB has running automation (not global)
-            const isThisTabRunning = status.tabId === tab.id && status.isRunning;
+        // Check if THIS TAB has running automation (not global)
+        const isThisTabRunning = status.tabId === tab.id && status.isRunning;
 
-            if (isThisTabRunning) {
-                this.startAutomationBtn.disabled = true;
-                this.stopAutomationBtn.disabled = false;
+        if (isThisTabRunning) {
+          // Hide start button, show running controls
+          this.startAutomationBtn.style.display = 'none';
+          if (this.runningControls) {
+            this.runningControls.style.display = 'flex';
+          }
+          if (this.resetAutomationBtn) {
+            this.resetAutomationBtn.style.display = 'inline-flex';
+            this.resetAutomationBtn.disabled = false;
+          }
 
-                if (status.isPaused) {
-                    // Show resume, hide pause
-                    this.pauseAutomationBtn.style.display = 'none';
-                    this.resumeAutomationBtn.style.display = 'inline-flex';
-                    this.resumeAutomationBtn.disabled = false;
-                } else {
-                    // Show pause, hide resume
-                    this.pauseAutomationBtn.style.display = 'inline-flex';
-                    this.pauseAutomationBtn.disabled = false;
-                    this.resumeAutomationBtn.style.display = 'none';
-                }
-            } else {
-                // This tab is not running - enable start button
-                this.startAutomationBtn.disabled = false;
-                this.stopAutomationBtn.disabled = true;
-                this.pauseAutomationBtn.style.display = 'none';
-                this.resumeAutomationBtn.style.display = 'none';
+          if (status.isPaused) {
+            // Show resume, hide pause
+            if (this.pauseAutomationBtn) {
+              this.pauseAutomationBtn.style.display = 'none';
             }
-        } catch (error) {
-            this.logError('Failed to update button states:', error);
-            // Enable start button by default on error
-            this.startAutomationBtn.disabled = false;
-            this.stopAutomationBtn.disabled = true;
-            this.pauseAutomationBtn.style.display = 'none';
-            this.resumeAutomationBtn.style.display = 'none';
+            if (this.resumeAutomationBtn) {
+              this.resumeAutomationBtn.style.display = 'inline-flex';
+              this.resumeAutomationBtn.disabled = false;
+            }
+          } else {
+            // Show pause, hide resume
+            if (this.pauseAutomationBtn) {
+              this.pauseAutomationBtn.style.display = 'inline-flex';
+              this.pauseAutomationBtn.disabled = false;
+            }
+            if (this.resumeAutomationBtn) {
+              this.resumeAutomationBtn.style.display = 'none';
+            }
+          }
+        } else {
+          // This tab is not running - show start button only
+          this.startAutomationBtn.style.display = 'inline-flex';
+          this.startAutomationBtn.disabled = this.prompts.length === 0;
+
+          // Hide running controls
+          if (this.runningControls) {
+            this.runningControls.style.display = 'none';
+          }
         }
-        if (this.prompts.length > 0) {
-            this.renderPrompts();
+      } catch (error) {
+        this.logError('Failed to update button states:', error);
+
+        // Enable start button by default on error
+        this.startAutomationBtn.style.display = 'inline-flex';
+        this.startAutomationBtn.disabled = this.prompts.length === 0;
+
+        // Hide running controls on error
+        if (this.runningControls) {
+          this.runningControls.style.display = 'none';
         }
+      }
+
+      if (this.prompts.length > 0) {
+        this.renderPrompts();
+      }
     }
+
 
     openPromptManager() {
         // Open the prompt manager in a new tab
@@ -711,16 +760,28 @@ class PerplexityAutomator {
         }
     }
 
-    async stopAutomation() {
-        try {
-            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-            await browser.runtime.sendMessage({
-                type: 'stop-automation',
-                tabId: tab.id
-            });
-        } catch (error) {
-            this.logError('Failed to stop automation:', error);
-        }
+    async resetAutomation() {
+      // Show confirmation dialog
+      const confirmed = confirm(
+        'Are you sure you want to reset the automation?\n\n' +
+        'This will stop the current automation and clear all progress. ' +
+        'Any responses collected so far will be preserved in the document.'
+      );
+
+      if (!confirmed) {
+        return;
+      }
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        await browser.runtime.sendMessage({
+          type: 'reset-automation',
+          tabId: tab.id
+        });
+        this.showNotification('Automation reset successfully', 'info');
+      } catch (error) {
+        this.logError('Failed to reset automation:', error);
+        this.showNotification('Failed to reset automation', 'error');
+      }
     }
 
     async pauseAutomation() {

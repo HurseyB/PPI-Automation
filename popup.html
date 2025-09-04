@@ -36,36 +36,40 @@
 
             <!-- Automation Controls -->
             <section class="automation-section">
-                <div class="section-header">
-                    <h2>Automation</h2>
-                </div>
-
-                <div class="automation-controls">
-                    <!-- Insert this in popup.html, inside the <form> or controls container, alongside existing controls -->
-                    <div class="form-group">
-                        <label for="companyNameInput" class="form-label">Company Name</label>
-                        <input id="companyNameInput" type="text" class="form-control" placeholder="Enter company name" />
+                <!-- Automation Controls -->
+                <div class="automation-section">
+                    <div class="section-header">
+                        <h2>🤖 Automation</h2>
                     </div>
 
-                    <button id="startAutomationBtn" class="btn btn-success">
-                        <span class="btn-icon">▶️</span>
-                        Start Automation
-                    </button>
+                    <!-- Company Name Input -->
+                    <div class="form-group">
+                        <label for="companyNameInput" class="form-label">Company Name (Optional)</label>
+                        <input type="text" id="companyNameInput" class="form-control" placeholder="Enter company name to replace [Company Name] in prompts">
+                    </div>
 
-                    <button id="pauseAutomationBtn" class="btn btn-secondary" style="display: none;">
-                        <span class="btn-icon">⏸️</span>
-                        Pause Automation
-                    </button>
+                    <!-- Automation Button Controls -->
+                    <div class="automation-controls">
+                        <!-- Start Button (always visible) -->
+                        <button id="startAutomationBtn" class="btn btn-success" disabled>
+                            <span class="btn-icon">▶️</span> Start Automation
+                        </button>
 
-                    <button id="resumeAutomationBtn" class="btn btn-primary" style="display: none;">
-                        <span class="btn-icon">▶️</span>
-                        Resume Automation
-                    </button>
+                        <!-- Running State Controls (hidden by default) -->
+                        <div class="running-controls" style="display: none;">
+                            <button id="pauseAutomationBtn" class="btn btn-secondary" style="display: none;">
+                                <span class="btn-icon">⏸️</span> Pause
+                            </button>
 
-                    <button id="stopAutomationBtn" class="btn btn-danger" style="display: none;">
-                        <span class="btn-icon">⏹️</span>
-                        Stop Automation
-                    </button>
+                            <button id="resumeAutomationBtn" class="btn btn-secondary" style="display: none;">
+                                <span class="btn-icon">▶️</span> Resume
+                            </button>
+
+                            <button id="resetAutomationBtn" class="btn btn-danger" style="display: none;">
+                                <span class="btn-icon">🔄</span> Reset
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </section>
 

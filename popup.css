@@ -960,6 +960,46 @@ body {
     opacity: 0.9;
 }
 
+/* Automation Controls Layout */
+.automation-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.running-controls {
+  display: flex;
+  gap: var(--space-8);
+  align-items: center;
+}
+
+/* Reset Button Specific Styling */
+.btn-danger {
+  background-color: var(--color-error);
+  color: var(--color-btn-primary-text);
+  border: 1px solid var(--color-error);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: var(--color-error);
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Responsive Layout */
+@media (max-width: 480px) {
+  .running-controls {
+    flex-direction: column;
+    gap: var(--space-8);
+  }
+
+  .running-controls .btn {
+    width: 100%;
+  }
+}
+
+
 /* Prompts Section */
 .prompts-section {
     display: flex;
