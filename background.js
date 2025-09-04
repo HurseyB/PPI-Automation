@@ -107,15 +107,20 @@ class AutomationManager {
           sendResponse({ success: true });
           break;
         case 'stop-automation':
-          await this.stopAutomation();
+          // Stop all running automations or specific tab
+          await this.stopAutomation(message.tabId);
           sendResponse({ success: true });
           break;
         case 'pause-automation':
-          await this.pauseAutomation();
+          // Need to determine which tab to pause - use current active tab or pass tabId
+          const pauseTabId = message.tabId || this.currentTabId;
+          await this.pauseAutomation(pauseTabId);
           sendResponse({ success: true });
           break;
         case 'resume-automation':
-          await this.resumeAutomation();
+          // Need to determine which tab to resume
+          const resumeTabId = message.tabId || this.currentTabId;
+          await this.resumeAutomation(resumeTabId);
           sendResponse({ success: true });
           break;
         case 'get-automation-status':
@@ -266,75 +271,103 @@ class AutomationManager {
   }
 
 
-  async stopAutomation() {
-    if (!this.isRunning) {
-      this.log('Automation is not running');
+  async stopAutomation(tabId = null) {
+    // If no tabId specified, stop all running automations
+    if (tabId === null) {
+      const runningTabs = Array.from(this.tabAutomations.keys())
+        .filter(id => this.tabAutomations.get(id).isRunning);
+
+      if (runningTabs.length === 0) {
+        this.log('No automation is running');
+        return;
+      }
+
+      // Stop all running automations
+      for (const runningTabId of runningTabs) {
+        await this.stopAutomation(runningTabId);
+      }
       return;
     }
 
-    this.log('Stopping automation');
-    this.isRunning = false;
-    this.isPaused = false;
-    this.isProcessingPrompt = false;
+    const tabState = this.getTabState(tabId);
+    if (!tabState || !tabState.isRunning) {
+      this.log(`Automation is not running on tab ${tabId}`);
+      return;
+    }
+
+    this.log(`Stopping automation on tab ${tabId}`);
+
+    // Update per-tab state
+    this.updateTabState(tabId, {
+      isRunning: false,
+      isPaused: false,
+      isProcessingPrompt: false
+    });
+
+    // Update global state
+    this.isRunning = this.hasRunningAutomation();
 
     // Clear any pending timeouts
     this.clearCurrentTimeout();
 
     // Notify content script to stop
-    if (this.currentTabId) {
       try {
-        await browser.tabs.sendMessage(this.currentTabId, {
+        await browser.tabs.sendMessage(tabId, {
           type: 'stop-automation'
         });
       } catch (error) {
         this.logError('Failed to notify content script of stop:', error);
       }
-    }
 
     // Save final results
-    await this.saveFinalResults();
+    await this.saveFinalResults(tabId);
     // Clear automation state
     await this.clearAutomationState();
 
     // Notify popup
     await this.sendMessageToPopup('automation-stopped', {
-      completed: this.processedResults.length,
-      total: this.prompts.length,
-      results: this.processedResults
+      completed: tabState.processedResults.length,
+      total: tabState.prompts.length,
+      results: tabState.processedResults,
+      tabId: tabId
     });
   }
 
-  async pauseAutomation() {
-    if (!this.isRunning) {
-      throw new Error('Automation is not running');
+  async pauseAutomation(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState || !tabState.isRunning) {
+      throw new Error(`Automation is not running on tab ${tabId}`);
     }
 
-    this.isPaused = true;
+    this.updateTabState(tabId, { isPaused: true });
     this.clearCurrentTimeout();
-    this.log('Automation paused');
+    this.log(`Automation paused on tab ${tabId}`);
     await this.saveAutomationState();
     await this.sendMessageToPopup('automation-paused', {
-      currentIndex: this.currentPromptIndex,
-      total: this.prompts.length
+      currentIndex: tabState.currentPromptIndex,
+      total: tabState.prompts.length,
+      tabId: tabId
     });
   }
 
-  async resumeAutomation() {
-    if (!this.isRunning || !this.isPaused) {
-      throw new Error('Automation is not paused');
+  async resumeAutomation(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState || !tabState.isRunning || !tabState.isPaused) {
+      throw new Error(`Automation is not paused on tab ${tabId}`);
     }
 
-    this.isPaused = false;
-    this.log('Automation resumed');
+    this.updateTabState(tabId, { isPaused: false });
+    this.log(`Automation resumed on tab ${tabId}`);
     await this.saveAutomationState();
     await this.sendMessageToPopup('automation-resumed', {
-      currentIndex: this.currentPromptIndex,
-      total: this.prompts.length
+      currentIndex: tabState.currentPromptIndex,
+      total: tabState.prompts.length,
+      tabId: tabId
     });
 
     // Continue processing from current prompt if not already processing
-    if (!this.isProcessingPrompt) {
-      await this.processNextPrompt();
+    if (!tabState.isProcessingPrompt) {
+      await this.processNextPrompt(tabId);
     }
   }
 
@@ -369,7 +402,7 @@ class AutomationManager {
     }
 
     const currentPrompt = tabState.prompts[tabState.currentPromptIndex];
-    const promptNumber = this.currentPromptIndex + 1;
+    const promptNumber = tabState.currentPromptIndex + 1;
     
     this.log(`Processing prompt ${promptNumber}/${tabState.prompts.length}: ${currentPrompt.substring(0, 50)}...`);
     this.updateTabState(tabId, { isProcessingPrompt: true });
@@ -500,13 +533,19 @@ class AutomationManager {
     }
   }
 
-  async handlePromptFailed(error, promptIndex) {
-    // Use the correct prompt index - either passed or current
-    const actualIndex = promptIndex !== undefined ? promptIndex : this.currentPromptIndex;
+  async handlePromptFailed(error, promptIndex, tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) {
+      this.logError(`No tab state found for tab ${tabId}`);
+      return;
+    }
+
+    // Use the correct prompt index - either passed or current for this tab
+    const actualIndex = promptIndex !== undefined ? promptIndex : tabState.currentPromptIndex;
     const promptNumber = actualIndex + 1;
     
     // Check if we've already processed this failure to prevent duplicates
-    if (this.completedPrompts.has(actualIndex)) {
+    if (tabState.completedPrompts.has(actualIndex)) {
       this.log(`Prompt ${promptNumber} failure already processed, ignoring duplicate`);
       return;
     }
@@ -515,24 +554,24 @@ class AutomationManager {
     
     // Clear timeout and processing flag
     this.clearCurrentTimeout();
-    this.isProcessingPrompt = false;
+    this.updateTabState(tabId, { isProcessingPrompt: false });
 
     // Get current retry count for this specific prompt
-    const currentRetries = this.retryAttempts.get(actualIndex) || 0;
+    const currentRetries = tabState.retryAttempts.get(actualIndex) || 0;
     const shouldRetry = this.settings.enableRetries &&
       currentRetries < this.settings.maxRetries &&
       this.isRetryableError(error);
 
     if (shouldRetry) {
       // Increment retry count for this prompt
-      this.retryAttempts.set(actualIndex, currentRetries + 1);
+      tabState.retryAttempts.set(actualIndex, currentRetries + 1);
       this.log(`Retrying prompt ${promptNumber} (attempt ${currentRetries + 1}/${this.settings.maxRetries})`);
 
       // Update progress with retry status
       await this.sendMessageToPopup('automation-progress', {
         current: promptNumber,
-        total: this.prompts.length,
-        prompt: this.prompts[actualIndex],
+        total: tabState.prompts.length,
+        prompt: tabState.prompts[actualIndex],
         status: 'retrying',
         retryCount: currentRetries + 1,
         maxRetries: this.settings.maxRetries,
@@ -541,43 +580,43 @@ class AutomationManager {
 
       // Wait longer before retry (don't increment currentPromptIndex)
       this.currentTimeout = setTimeout(() => {
-        if (this.isRunning && !this.isPaused) {
-          this.processNextPrompt(); // Retry same prompt
+        if (tabState.isRunning && !tabState.isPaused) {
+          this.processNextPrompt(tabId); // Retry same prompt
         }
       }, this.settings.retryDelay);
 
     } else {
       // Mark this prompt as completed (failed)
-      this.completedPrompts.add(actualIndex);
+      tabState.completedPrompts.add(actualIndex);
       
       // Save failed result
       const failedResult = {
         index: actualIndex,
         promptNumber: promptNumber,
-        prompt: this.prompts[actualIndex],
+        prompt: tabState.prompts[actualIndex],
         response: '',
         timestamp: Date.now(),
         success: false,
         error: error,
         retryCount: currentRetries,
-        automationId: this.automationId
+        automationId: tabState.automationId
       };
 
-      this.processedResults.push(failedResult);
-      await this.savePromptResult(actualIndex, failedResult);
+      tabState.processedResults.push(failedResult);
+      await this.savePromptResult(tabId, actualIndex, failedResult);
 
       // Update progress with failure
       await this.sendMessageToPopup('automation-progress', {
-        current: this.processedResults.length,
-        total: this.prompts.length,
-        prompt: this.prompts[actualIndex],
+        current: tabState.processedResults.length,
+        total: tabState.prompts.length,
+        prompt: tabState.prompts[actualIndex],
         status: 'failed',
         error: error,
         retryCount: currentRetries
       });
 
       if (this.settings.pauseOnError) {
-        await this.pauseAutomation();
+        await this.pauseAutomation(tabId);
         await this.sendMessageToPopup('automation-error', {
           error: `Prompt ${promptNumber} failed: ${error}`,
           promptIndex: actualIndex,
@@ -585,22 +624,27 @@ class AutomationManager {
         });
       } else {
         // Skip to next prompt
-        this.currentPromptIndex++;
-        this.retryAttempts.delete(actualIndex);
+        this.updateTabState(tabId, { currentPromptIndex: tabState.currentPromptIndex + 1 });
+        tabState.retryAttempts.delete(actualIndex);
         await this.saveAutomationState();
         
         this.currentTimeout = setTimeout(() => {
-          if (this.isRunning && !this.isPaused) {
-            this.processNextPrompt();
+          if (tabState.isRunning && !tabState.isPaused) {
+            this.processNextPrompt(tabId);
           }
         }, this.settings.delay);
       }
     }
   }
 
-  async handlePromptTimeout() {
-    this.logError(`Prompt ${this.currentPromptIndex + 1} timed out`);
-    await this.handlePromptFailed('Timeout - prompt execution exceeded time limit', this.currentPromptIndex);
+  async handlePromptTimeout(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) {
+      this.logError(`No tab state found for tab ${tabId} during timeout`);
+      return;
+    }
+    this.logError(`Prompt ${tabState.currentPromptIndex + 1} timed out`);
+    await this.handlePromptFailed('Timeout - prompt execution exceeded time limit', tabState.currentPromptIndex, tabId);
   }
 
   isRetryableError(error) {
@@ -618,20 +662,33 @@ class AutomationManager {
     return retryableErrors.some(retryable => errorLower.includes(retryable));
   }
 
-  async completeAutomation() {
+  async completeAutomation(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) {
+      this.logError(`No tab state found for tab ${tabId} during completion`);
+      return;
+    }
+
     this.log('Automation completed');
-    this.isRunning = false;
-    this.isPaused = false;
-    this.isProcessingPrompt = false;
+
+    // Update per-tab state
+    this.updateTabState(tabId, {
+      isRunning: false,
+      isPaused: false,
+      isProcessingPrompt: false
+    });
+
+    // Update global state
+    this.isRunning = this.hasRunningAutomation();
 
     // Save final results
-    await this.saveFinalResults();
+    await this.saveFinalResults(tabId);
 
     // Generate summary
-    const summary = this.generateAutomationSummary();
+    const summary = this.generateAutomationSummary(tabId);
 
     // Finalize background document
-    const documentManager = this.getTabDocumentManager(this.currentTabId);
+    const documentManager = this.getTabDocumentManager(tabId);
     documentManager.finalizeDocument(summary);
 
     // Clear automation state
@@ -639,21 +696,26 @@ class AutomationManager {
 
     // Notify popup
     await this.sendMessageToPopup('automation-complete', {
-      completed: this.processedResults.length,
-      total: this.prompts.length,
-      results: this.processedResults,
+      completed: tabState.processedResults.length,
+      total: tabState.prompts.length,
+      results: tabState.processedResults,
       summary: summary,
-      automationId: this.automationId
+      automationId: tabState.automationId
     });
     await this.showCompletionNotification(summary);
   }
 
-  generateAutomationSummary() {
-    const total = this.prompts.length;
-    const successful = this.processedResults.filter(r => r.success).length;
-    const failed = this.processedResults.filter(r => !r.success).length;
-    const withResponses = this.processedResults.filter(r => r.response && r.response.length > 0).length;
-    const totalRetries = Array.from(this.retryAttempts.values()).reduce((sum, count) => sum + count, 0);
+  generateAutomationSummary(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) {
+      return { total: 0, successful: 0, failed: 0, withResponses: 0, totalRetries: 0, successRate: 0, responseRate: 0, duration: 0 };
+    }
+
+    const total = tabState.prompts.length;
+    const successful = tabState.processedResults.filter(r => r.success).length;
+    const failed = tabState.processedResults.filter(r => !r.success).length;
+    const withResponses = tabState.processedResults.filter(r => r.response && r.response.length > 0).length;
+    const totalRetries = Array.from(tabState.retryAttempts.values()).reduce((sum, count) => sum + count, 0);
 
     return {
       total,
@@ -663,7 +725,7 @@ class AutomationManager {
       totalRetries,
       successRate: total > 0 ? (successful / total * 100).toFixed(1) : 0,
       responseRate: total > 0 ? (withResponses / total * 100).toFixed(1) : 0,
-      duration: Date.now() - this.automationId
+      duration: Date.now() - tabState.automationId
     };
   }
 
@@ -782,19 +844,25 @@ class AutomationManager {
     return `${seconds}s`;
   }
 
-  async saveFinalResults() {
+  async saveFinalResults(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) {
+      this.logError(`No tab state found for saving results on tab ${tabId}`);
+      return;
+    }
+
     try {
       const finalResults = {
-        automationId: this.automationId,
+        automationId: tabState.automationId,
         timestamp: Date.now(),
-        prompts: this.prompts,
-        results: this.processedResults,
-        summary: this.generateAutomationSummary(),
+        prompts: tabState.prompts,
+        results: tabState.processedResults,
+        summary: this.generateAutomationSummary(tabId),
         settings: this.settings
       };
 
       await browser.storage.local.set({
-        [`automation_${this.automationId}`]: finalResults,
+        [`automation_${tabState.automationId}`]: finalResults,
         lastAutomation: finalResults
       });
 
@@ -903,8 +971,9 @@ class AutomationManager {
 
   async handleContentScriptReady(tabId) {
     this.log(`Content script ready on tab ${tabId}`);
-    if (this.isRunning && this.currentTabId === tabId && !this.isPaused && !this.isProcessingPrompt) {
-      await this.processNextPrompt();
+    const tabState = this.getTabState(tabId);
+    if (tabState && tabState.isRunning && !tabState.isPaused && !tabState.isProcessingPrompt) {
+      await this.processNextPrompt(tabId);
     }
   }
 
@@ -986,9 +1055,11 @@ class AutomationManager {
     }
   }
 
-  async savePromptResult(index, result) {
+  async savePromptResult(tabId, index, result) {
     try {
-      const key = `promptResult_${this.automationId}_${index}`;
+      const tabState = this.getTabState(tabId);
+      const automationId = tabState ? tabState.automationId : this.automationId;
+      const key = `promptResult_${automationId}_${index}`;
       await browser.storage.local.set({ [key]: result });
     } catch (error) {
       this.logError('Failed to save prompt result:', error);

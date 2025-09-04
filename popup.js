@@ -701,7 +701,11 @@ class PerplexityAutomator {
 
     async stopAutomation() {
         try {
-            await browser.runtime.sendMessage({ type: 'stop-automation' });
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            await browser.runtime.sendMessage({
+                type: 'stop-automation',
+                tabId: tab.id
+            });
         } catch (error) {
             this.logError('Failed to stop automation:', error);
         }
@@ -709,8 +713,10 @@ class PerplexityAutomator {
 
     async pauseAutomation() {
         try {
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
             const response = await browser.runtime.sendMessage({
-                type: 'pause-automation'
+                type: 'pause-automation',
+                tabId: tab.id
             });
 
             if (response.success) {
@@ -726,8 +732,10 @@ class PerplexityAutomator {
 
     async resumeAutomation() {
         try {
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
             const response = await browser.runtime.sendMessage({
-                type: 'resume-automation'
+                type: 'resume-automation',
+                tabId: tab.id
             });
 
             if (response.success) {
