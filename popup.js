@@ -30,7 +30,7 @@ class PerplexityAutomator {
         this.isRunning = false;
         this.collapsedAll = false;
         this.documentManager = new DocumentManager(); // Document management
-        // Store the current company name in DocumentManager
+        // Initialize company name in DocumentManager (populated from tab state or UI state)
         this.documentManager.companyName = '';
         this.initializeElements();
         this.initializeNotificationSettings();
@@ -77,18 +77,18 @@ class PerplexityAutomator {
         this.loadUIState().then(async state => {  // <- ADD 'async' HERE
             if (!state) return;
 
-            // Retrieve tab-specific company name
+            // Retrieve tab-specific company name from background or UI state
             const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-            const tabData = await browser.runtime.sendMessage({
-              type: 'get-tab-document-data',
-              tabId: tab.id
-            });
+            const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
+            let name = '';
             if (tabData && tabData.companyName) {
-              this.companyNameInput.value = tabData.companyName;
-              this.documentManager.companyName = tabData.companyName;
+                name = tabData.companyName;
             } else if (state.companyName !== undefined && this.companyNameInput) {
-              this.companyNameInput.value = state.companyName;
-              this.documentManager.companyName = state.companyName;
+                name = state.companyName;
+            }
+            if (name) {
+                this.companyNameInput.value = name;
+                this.documentManager.companyName = name;
             }
 
             // Restore document data FIRST if it exists, but prioritize background sync
@@ -942,9 +942,9 @@ class DocumentManager {
                 }
             });
 
-            // 1. Get company name and sanitize
-            const safeName = this.companyName
-                .replace(/[<>:"\/\|?*\x00-\x1F]/g, '')
+            // Use the companyName stored in this DocumentManager instance for filename prefix
+            const safeName = (this.companyName || 'Company')
+                .replace(/[<>:"\/\\|?*\x00-\x1F]/g, '')
                 .replace(/\s+/g, '-');
 
             // 2. Format date/time as MM.DD.YYYY-HH.MM.SS
