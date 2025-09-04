@@ -909,8 +909,13 @@ class DocumentManager {
             </style>
         </head>
         <body>
-            <h1 style="text-align: center; margin-bottom: 24pt;">${title}</h1>
-            <p style="text-align: center; font-style: italic; margin-bottom: 24pt;">Generated: ${timestamp}</p>
+            <br style="font-size: 12pt;"></br>
+            <br style="font-size: 20pt;"></br>
+            <br style="font-size: 20pt;"></br>
+            <br style="font-size: 20pt;"></br>
+            <br style="font-size: 20pt;"></br>
+            <h1 style="font-size: 20pt;height: 100vh;display: flex;flex-direction: column;justify-content: center;text-align: left; margin: 0;padding: 0;">${title}</h1>
+            <p style="font-size: 12pt;text-align: left; font-style: italic; margin-bottom: 24pt;">${timestamp}</p>
         `;
 
         html += `
