@@ -1,431 +1,608 @@
 /**
- * Enhanced Perplexity AI Automator - Fixed Popup Script  
- * Fixed: Added proper error handling for connection issues
+ * Enhanced Perplexity AI Automator - Popup Script with Document Management
+ * Added: Document management system for collecting and downloading responses
  */
 
 class PerplexityAutomator {
-  constructor() {
-    this.prompts = [];
-    this.isRunning = false;
-    this.collapsedAll = false;
-    this.initializeElements();
-    this.bindEventListeners();
-    this.loadPrompts();
-    this.setupMessageListener();
-  }
+    constructor() {
+        this.prompts = [];
+        this.isRunning = false;
+        this.collapsedAll = false;
+        this.documentManager = new DocumentManager(); // NEW: Document management
+        this.initializeElements();
+        this.bindEventListeners();
+        this.loadPrompts();
+        this.setupMessageListener();
+    }
 
-  initializeElements() {
-    // Input elements
-    this.promptInput = document.getElementById('promptInput');
-    this.addPromptBtn = document.getElementById('addPromptBtn');
-    this.clearAllBtn = document.getElementById('clearAllBtn');
-    
-    // Display elements
-    this.promptsList = document.getElementById('promptsList');
-    this.promptCount = document.getElementById('promptCount');
-    this.toggleViewBtn = document.getElementById('toggleViewBtn');
-    
-    // Automation elements
-    this.startAutomationBtn = document.getElementById('startAutomationBtn');
-    this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
-    
-    // Progress elements
-    this.progressSection = document.querySelector('.progress-section');
-    this.progressText = document.getElementById('progressText');
-    this.progressFill = document.getElementById('progressFill');
-    this.currentPrompt = document.getElementById('currentPrompt');
-    this.automationLog = document.getElementById('automationLog');
-  }
+    initializeElements() {
+        // Input elements
+        this.promptInput = document.getElementById('promptInput');
+        this.addPromptBtn = document.getElementById('addPromptBtn');
+        this.clearAllBtn = document.getElementById('clearAllBtn');
 
-  bindEventListeners() {
-    // Input events
-    this.addPromptBtn.addEventListener('click', () => this.addPrompt());
-    this.clearAllBtn.addEventListener('click', () => this.clearAllPrompts());
-    this.promptInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.ctrlKey) {
-        this.addPrompt();
-      }
-    });
+        // Display elements
+        this.promptsList = document.getElementById('promptsList');
+        this.promptCount = document.getElementById('promptCount');
+        this.toggleViewBtn = document.getElementById('toggleViewBtn');
 
-    // View toggle
-    this.toggleViewBtn.addEventListener('click', () => this.toggleAllPrompts());
+        // Document management elements - NEW
+        this.downloadTxtBtn = document.getElementById('downloadTxtBtn');
+        this.downloadDocxBtn = document.getElementById('downloadDocxBtn');
+        this.clearDocumentBtn = document.getElementById('clearDocumentBtn');
+        this.documentStatus = document.getElementById('documentStatus');
+        this.responseCount = document.getElementById('responseCount');
 
-    // Automation controls
-    this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
-    this.stopAutomationBtn.addEventListener('click', () => this.stopAutomation());
+        // Automation elements
+        this.startAutomationBtn = document.getElementById('startAutomationBtn');
+        this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
 
-    // Input validation
-    this.promptInput.addEventListener('input', () => this.validateInput());
-  }
+        // Progress elements
+        this.progressSection = document.querySelector('.progress-section');
+        this.progressText = document.getElementById('progressText');
+        this.progressFill = document.getElementById('progressFill');
+        this.currentPrompt = document.getElementById('currentPrompt');
+        this.automationLog = document.getElementById('automationLog');
+    }
 
-  setupMessageListener() {
-    browser.runtime.onMessage.addListener((message) => {
-      try {
-        switch (message.type) {
-          case 'automation-started':
-            this.handleAutomationStarted(message.data);
-            break;
-          case 'automation-progress':
-            this.handleProgressUpdate(message.data);
-            break;
-          case 'automation-complete':
-            this.handleAutomationComplete(message.data);
-            break;
-          case 'automation-stopped':
-            this.handleAutomationStopped(message.data);
-            break;
-          case 'automation-error':
-            this.handleAutomationError(message.data);
-            break;
+    bindEventListeners() {
+        // Input events
+        this.addPromptBtn.addEventListener('click', () => this.addPrompt());
+        this.clearAllBtn.addEventListener('click', () => this.clearAllPrompts());
+        this.promptInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                this.addPrompt();
+            }
+        });
+
+        // View toggle
+        this.toggleViewBtn.addEventListener('click', () => this.toggleAllPrompts());
+
+        // Document management events - NEW
+        this.downloadTxtBtn.addEventListener('click', () => this.documentManager.downloadTxt());
+        this.downloadDocxBtn.addEventListener('click', () => this.documentManager.downloadDocx());
+        this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
+
+        // Automation controls
+        this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
+        this.stopAutomationBtn.addEventListener('click', () => this.stopAutomation());
+
+        // Input validation
+        this.promptInput.addEventListener('input', () => this.validateInput());
+    }
+
+    setupMessageListener() {
+        browser.runtime.onMessage.addListener((message) => {
+            try {
+                switch (message.type) {
+                    case 'automation-started':
+                        this.handleAutomationStarted(message.data);
+                        break;
+                    case 'automation-progress':
+                        this.handleProgressUpdate(message.data);
+                        break;
+                    case 'automation-complete':
+                        this.handleAutomationComplete(message.data);
+                        break;
+                    case 'automation-stopped':
+                        this.handleAutomationStopped(message.data);
+                        break;
+                    case 'automation-error':
+                        this.handleAutomationError(message.data);
+                        break;
+                    case 'document-updated': // NEW: Handle document updates
+                        this.handleDocumentUpdated(message.data);
+                        break;
+                }
+            } catch (error) {
+                this.logError('Error handling message:', error);
+            }
+        });
+    }
+
+    handleAutomationStarted(data) {
+        this.isRunning = true;
+        this.showProgressSection();
+        this.updateAutomationButton();
+        this.progressText.textContent = '0 of ' + data.total + ' completed';
+        this.progressFill.style.width = '0%';
+        this.currentPrompt.textContent = 'Starting automation...';
+        this.clearLog();
+        this.logMessage('Automation started with ' + data.total + ' prompts');
+        
+        // NEW: Initialize document for new automation
+        this.documentManager.initializeDocument(data.total);
+        this.updateDocumentStatus('collecting', 'Collecting responses...');
+    }
+
+    handleProgressUpdate(data) {
+        const current = data.current;
+        const total = data.total;
+
+        this.progressText.textContent = `${current} of ${total} completed`;
+        const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+        this.progressFill.style.width = `${percentage}%`;
+
+        if (data.status === 'processing' && data.prompt) {
+            this.currentPrompt.textContent = `Processing: ${data.prompt.substring(0, 50)}...`;
+            this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
+        } else if (data.status === 'completed') {
+            this.currentPrompt.textContent = `Completed prompt ${current}/${total}`;
+            this.logMessage(`✓ Prompt ${current} completed successfully`);
+            
+            // NEW: Add response to document if available
+            if (data.response && data.prompt) {
+                this.documentManager.addResponse(current, data.prompt, data.response);
+                this.updateResponseCount();
+            }
+        } else if (data.status === 'failed') {
+            this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
+            this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
+        } else if (data.status === 'retrying') {
+            this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
+            this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
         }
-      } catch (error) {
-        this.logError('Error handling message:', error);
-      }
-    });
-  }
-
-  handleAutomationStarted(data) {
-    this.isRunning = true;
-    this.showProgressSection();
-    this.updateAutomationButton();
-    this.progressText.textContent = '0 of ' + data.total + ' completed';
-    this.progressFill.style.width = '0%';
-    this.currentPrompt.textContent = 'Starting automation...';
-    this.clearLog();
-    this.logMessage('Automation started with ' + data.total + ' prompts');
-  }
-
-  handleProgressUpdate(data) {
-    // Use exact values from background script
-    const current = data.current;
-    const total = data.total;
-
-    // Update progress display
-    this.progressText.textContent = `${current} of ${total} completed`;
-    const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
-    this.progressFill.style.width = `${percentage}%`;
-
-    // Update current prompt display based on status
-    if (data.status === 'processing' && data.prompt) {
-      this.currentPrompt.textContent = `Processing: ${data.prompt.substring(0, 50)}...`;
-      this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
-    } else if (data.status === 'completed') {
-      this.currentPrompt.textContent = `Completed prompt ${current}/${total}`;
-      this.logMessage(`✓ Prompt ${current} completed successfully`);
-    } else if (data.status === 'failed') {
-      this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
-      this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
-    } else if (data.status === 'retrying') {
-      this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
-      this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
-    }
-  }
-
-  handleAutomationComplete(data) {
-    this.isRunning = false;
-    this.updateAutomationButton();
-    this.currentPrompt.textContent = `Automation completed! ${data.completed}/${data.total} prompts processed`;
-    this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
-    if (data.summary) {
-      this.logMessage(`Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
-    }
-  }
-
-  handleAutomationStopped(data) {
-    this.isRunning = false;
-    this.updateAutomationButton();
-    this.currentPrompt.textContent = 'Automation stopped';
-    this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
-  }
-
-  handleAutomationError(data) {
-    this.isRunning = false;
-    this.updateAutomationButton();
-    this.currentPrompt.textContent = 'Automation error occurred';
-    this.logMessage(`❌ Error: ${data.error || 'Unknown error occurred'}`);
-    this.showNotification('Automation error: ' + (data.error || 'Unknown error'), 'error');
-  }
-
-  showProgressSection() {
-    this.progressSection.style.display = 'block';
-  }
-
-  hideProgressSection() {
-    this.progressSection.style.display = 'none';
-  }
-
-  clearLog() {
-    this.automationLog.innerHTML = '';
-  }
-
-  logMessage(message) {
-    const timestamp = new Date().toLocaleTimeString();
-    this.automationLog.innerHTML += `<div>[${timestamp}] ${message}</div>`;
-    this.automationLog.scrollTop = this.automationLog.scrollHeight;
-  }
-
-  addPrompt() {
-    const promptText = this.promptInput.value.trim();
-    if (!promptText) return;
-
-    this.prompts.push(promptText);
-    this.promptInput.value = '';
-    this.renderPrompts();
-    this.savePrompts();
-    this.validateInput();
-  }
-
-  clearAllPrompts() {
-    if (this.prompts.length === 0) return;
-    
-    if (confirm('Are you sure you want to clear all prompts?')) {
-      this.prompts = [];
-      this.renderPrompts();
-      this.savePrompts();
-      this.validateInput();
-    }
-  }
-
-  deletePrompt(index) {
-    this.prompts.splice(index, 1);
-    this.renderPrompts();
-    this.savePrompts();
-    this.validateInput();
-  }
-
-  editPrompt(index) {
-    const currentText = this.prompts[index];
-    const newText = prompt('Edit prompt:', currentText);
-    if (newText !== null && newText.trim() !== '') {
-      this.prompts[index] = newText.trim();
-      this.renderPrompts();
-      this.savePrompts();
-    }
-  }
-
-  togglePromptExpansion(index) {
-    const contentElement = document.querySelector(`[data-prompt-content="${index}"]`);
-    if (contentElement) {
-      contentElement.classList.toggle('expanded');
-    }
-  }
-
-  toggleAllPrompts() {
-    this.collapsedAll = !this.collapsedAll;
-    const contentElements = document.querySelectorAll('.prompt-content');
-    
-    if (this.collapsedAll) {
-      contentElements.forEach(el => el.classList.remove('expanded'));
-      this.toggleViewBtn.textContent = 'Expand All';
-    } else {
-      contentElements.forEach(el => el.classList.add('expanded'));
-      this.toggleViewBtn.textContent = 'Collapse All';
-    }
-  }
-
-  renderPrompts() {
-    this.promptCount.textContent = this.prompts.length;
-    
-    if (this.prompts.length === 0) {
-      this.promptsList.innerHTML = '<div class="empty-state">No prompts added yet. Add your first prompt above!</div>';
-      return;
     }
 
-    const promptsHTML = this.prompts.map((prompt, index) => `
-      <div class="prompt-item">
-        <div class="prompt-header" onclick="automator.togglePromptExpansion(${index})">
-          <span class="prompt-number">#${index + 1}</span>
-          <span class="prompt-preview">${this.escapeHtml(prompt.substring(0, 60))}${prompt.length > 60 ? '...' : ''}</span>
-          <div class="prompt-actions" onclick="event.stopPropagation();">
-            <button class="btn btn-edit btn-icon" onclick="automator.editPrompt(${index})" title="Edit">✏️</button>
-            <button class="btn btn-delete btn-icon" onclick="automator.deletePrompt(${index})" title="Delete">🗑️</button>
-          </div>
-        </div>
-        <div class="prompt-content" data-prompt-content="${index}">
-          <div class="prompt-text">${this.escapeHtml(prompt)}</div>
-        </div>
-      </div>
-    `).join('');
+    handleAutomationComplete(data) {
+        this.isRunning = false;
+        this.updateAutomationButton();
+        this.currentPrompt.textContent = `Automation completed! ${data.completed}/${data.total} prompts processed`;
+        this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
+        
+        if (data.summary) {
+            this.logMessage(`Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
+        }
 
-    this.promptsList.innerHTML = promptsHTML;
-  }
-
-  async startAutomation() {
-    if (this.prompts.length === 0) {
-      this.showNotification('Please add at least one prompt before starting automation.', 'error');
-      return;
+        // NEW: Finalize document
+        this.documentManager.finalizeDocument(data.summary);
+        this.updateDocumentStatus('ready', 'Document ready for download');
+        this.enableDownloadButtons();
     }
 
-    if (this.isRunning) {
-      this.showNotification('Automation is already running.', 'warning');
-      return;
+    handleAutomationStopped(data) {
+        this.isRunning = false;
+        this.updateAutomationButton();
+        this.currentPrompt.textContent = 'Automation stopped';
+        this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
+        
+        // NEW: Partial document available
+        if (this.documentManager.hasResponses()) {
+            this.updateDocumentStatus('partial', 'Partial document available');
+            this.enableDownloadButtons();
+        }
     }
 
-    try {
-      // Get current tab
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      
-      if (!tab) {
-        throw new Error('Could not get current tab');
-      }
-
-      // Check if it's a Perplexity tab
-      if (!tab.url.includes('perplexity.ai')) {
-        this.showNotification('Please navigate to perplexity.ai first.', 'error');
-        return;
-      }
-
-      // Disable the start button
-      this.startAutomationBtn.disabled = true;
-      
-      // Send start automation message to background script
-      const response = await browser.runtime.sendMessage({
-        type: 'start-automation',
-        prompts: this.prompts,
-        tabId: tab.id
-      });
-
-      if (!response || !response.success) {
-        throw new Error(response?.error || 'Failed to start automation');
-      }
-      
-    } catch (error) {
-      this.startAutomationBtn.disabled = false;
-      this.logError('Failed to start automation:', error);
-      
-      // Check for specific connection errors
-      if (error.message.includes('Could not establish connection') || 
-          error.message.includes('Receiving end does not exist')) {
-        this.showNotification('Extension connection error. Please try reloading the page and reopening this popup.', 'error');
-      } else {
-        this.showNotification('Failed to start automation: ' + error.message, 'error');
-      }
-    }
-  }
-
-  async stopAutomation() {
-    if (!this.isRunning) {
-      this.showNotification('No automation is currently running.', 'warning');
-      return;
+    handleAutomationError(data) {
+        this.isRunning = false;
+        this.updateAutomationButton();
+        this.currentPrompt.textContent = 'Automation error occurred';
+        this.logMessage(`❌ Error: ${data.error || 'Unknown error occurred'}`);
+        this.showNotification('Automation error: ' + (data.error || 'Unknown error'), 'error');
     }
 
-    try {
-      const response = await browser.runtime.sendMessage({
-        type: 'stop-automation'
-      });
-
-      if (!response || !response.success) {
-        throw new Error(response?.error || 'Failed to stop automation');
-      }
-    } catch (error) {
-      this.logError('Failed to stop automation:', error);
-      this.showNotification('Failed to stop automation: ' + error.message, 'error');
+    // NEW: Handle document update notifications
+    handleDocumentUpdated(data) {
+        this.updateResponseCount();
+        if (data.status) {
+            this.updateDocumentStatus(data.status, data.message);
+        }
     }
-  }
 
-  updateAutomationButton() {
-    if (this.isRunning) {
-      this.startAutomationBtn.style.display = 'none';
-      this.stopAutomationBtn.style.display = 'block';
-    } else {
-      this.startAutomationBtn.style.display = 'block';
-      this.startAutomationBtn.disabled = false;
-      this.stopAutomationBtn.style.display = 'none';
+    // NEW: Document management methods
+    updateDocumentStatus(status, message) {
+        this.documentStatus.textContent = message;
+        this.documentStatus.className = `status status--${status === 'error' ? 'error' : status === 'ready' ? 'success' : 'info'}`;
     }
-  }
 
-  validateInput() {
-    const hasText = this.promptInput.value.trim().length > 0;
-    const hasPrompts = this.prompts.length > 0;
-    
-    this.addPromptBtn.disabled = !hasText;
-    this.clearAllBtn.style.display = hasPrompts ? 'inline-flex' : 'none';
-    this.toggleViewBtn.style.display = hasPrompts ? 'inline-flex' : 'none';
-    
-    // Update start button state
-    if (!this.isRunning) {
-      this.startAutomationBtn.disabled = !hasPrompts;
+    updateResponseCount() {
+        const count = this.documentManager.getResponseCount();
+        this.responseCount.textContent = count;
+        
+        // Enable clear button if responses exist
+        this.clearDocumentBtn.disabled = count === 0;
     }
-  }
 
-  savePrompts() {
-    try {
-      browser.storage.local.set({ prompts: this.prompts });
-    } catch (error) {
-      this.logError('Failed to save prompts:', error);
+    enableDownloadButtons() {
+        if (this.documentManager.hasResponses()) {
+            this.downloadTxtBtn.disabled = false;
+            this.downloadDocxBtn.disabled = false;
+        }
     }
-  }
 
-  async loadPrompts() {
-    try {
-      const result = await browser.storage.local.get(['prompts']);
-      if (result.prompts && Array.isArray(result.prompts)) {
-        this.prompts = result.prompts;
-        this.renderPrompts();
+    clearDocument() {
+        if (confirm('Are you sure you want to clear the document? This will remove all collected responses.')) {
+            this.documentManager.clearDocument();
+            this.updateResponseCount();
+            this.updateDocumentStatus('ready', 'Ready');
+            this.downloadTxtBtn.disabled = true;
+            this.downloadDocxBtn.disabled = true;
+            this.showNotification('Document cleared', 'info');
+        }
+    }
+
+    // Existing methods remain unchanged...
+    showProgressSection() {
+        this.progressSection.style.display = 'block';
+    }
+
+    hideProgressSection() {
+        this.progressSection.style.display = 'none';
+    }
+
+    clearLog() {
+        this.automationLog.innerHTML = '';
+    }
+
+    logMessage(message) {
+        const timestamp = new Date().toLocaleTimeString();
+        this.automationLog.innerHTML += `<div class="log-entry">[${timestamp}] ${message}</div>`;
+        this.automationLog.scrollTop = this.automationLog.scrollHeight;
+    }
+
+    logError(message, error) {
+        console.error(`[Perplexity Automator] ${message}`, error);
+        this.logMessage(`❌ ${message}: ${error}`);
+    }
+
+    showNotification(message, type = 'info') {
+        // Simple notification - could be enhanced with proper UI notifications
+        console.log(`[${type.toUpperCase()}] ${message}`);
+    }
+
+    updateAutomationButton() {
+        if (this.isRunning) {
+            this.startAutomationBtn.style.display = 'none';
+            this.stopAutomationBtn.style.display = 'block';
+        } else {
+            this.startAutomationBtn.style.display = 'block';
+            this.stopAutomationBtn.style.display = 'none';
+        }
+    }
+
+    validateInput() {
+        const isEmpty = !this.promptInput.value.trim();
+        this.addPromptBtn.disabled = isEmpty;
+    }
+
+    async addPrompt() {
+        const text = this.promptInput.value.trim();
+        if (!text) return;
+
+        if (this.prompts.length >= 50) {
+            this.showNotification('Maximum 50 prompts allowed', 'warning');
+            return;
+        }
+
+        this.prompts.push(text);
+        this.promptInput.value = '';
         this.validateInput();
-      }
-    } catch (error) {
-      this.logError('Failed to load prompts:', error);
+        
+        await this.savePrompts();
+        this.renderPrompts();
+        this.updatePromptCount();
+        this.updateStartButton();
     }
-  }
 
-  showNotification(message, type = 'info') {
-    // Create notification element
-    const notification = document.createElement('div');
-    notification.className = `notification notification--${type}`;
-    notification.textContent = message;
-    
-    // Style the notification
-    Object.assign(notification.style, {
-      position: 'fixed',
-      top: '10px',
-      right: '10px',
-      padding: '10px 15px',
-      borderRadius: '5px',
-      color: 'white',
-      fontSize: '14px',
-      zIndex: '10000',
-      maxWidth: '300px',
-      wordWrap: 'break-word'
-    });
+    async clearAllPrompts() {
+        if (this.prompts.length === 0) return;
+        
+        if (confirm('Are you sure you want to clear all prompts?')) {
+            this.prompts = [];
+            await this.savePrompts();
+            this.renderPrompts();
+            this.updatePromptCount();
+            this.updateStartButton();
+        }
+    }
 
-    // Set background color based on type
-    const colors = {
-      info: '#3498db',
-      success: '#2ecc71',
-      warning: '#f39c12',
-      error: '#e74c3c'
-    };
-    notification.style.backgroundColor = colors[type] || colors.info;
+    toggleAllPrompts() {
+        this.collapsedAll = !this.collapsedAll;
+        const items = document.querySelectorAll('.prompt-item');
+        
+        items.forEach(item => {
+            const content = item.querySelector('.prompt-content');
+            if (content) {
+                if (this.collapsedAll) {
+                    content.classList.remove('expanded');
+                } else {
+                    content.classList.add('expanded');
+                }
+            }
+        });
 
-    // Add to page
-    document.body.appendChild(notification);
+        this.toggleViewBtn.textContent = this.collapsedAll ? 'Expand All' : 'Collapse All';
+    }
 
-    // Remove after 5 seconds
-    setTimeout(() => {
-      if (notification.parentNode) {
-        notification.parentNode.removeChild(notification);
-      }
-    }, 5000);
+    async startAutomation() {
+        if (this.prompts.length === 0) {
+            this.showNotification('No prompts to run', 'warning');
+            return;
+        }
 
-    // Also log the message
-    this.logMessage(`${type.toUpperCase()}: ${message}`);
-  }
+        try {
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            
+            if (!tab.url.includes('perplexity.ai')) {
+                this.showNotification('Please navigate to Perplexity.ai first', 'error');
+                return;
+            }
 
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
+            await browser.runtime.sendMessage({
+                type: 'start-automation',
+                prompts: this.prompts,
+                tabId: tab.id
+            });
+            
+        } catch (error) {
+            this.logError('Failed to start automation:', error);
+            this.showNotification('Failed to start automation', 'error');
+        }
+    }
 
-  log(message, ...args) {
-    console.log(`[Perplexity Automator Popup] ${message}`, ...args);
-  }
+    async stopAutomation() {
+        try {
+            await browser.runtime.sendMessage({ type: 'stop-automation' });
+        } catch (error) {
+            this.logError('Failed to stop automation:', error);
+        }
+    }
 
-  logError(message, error) {
-    console.error(`[Perplexity Automator Popup ERROR] ${message}`, error);
-  }
+    renderPrompts() {
+        if (this.prompts.length === 0) {
+            this.promptsList.innerHTML = '<div class="empty-state"><p>No prompts saved yet. Add your first prompt above.</p></div>';
+            return;
+        }
+
+        this.promptsList.innerHTML = this.prompts.map((prompt, index) => `
+            <div class="prompt-item">
+                <div class="prompt-header" onclick="this.parentElement.querySelector('.prompt-content').classList.toggle('expanded')">
+                    <span class="prompt-number">#{index + 1}</span>
+                    <span class="prompt-preview">${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}</span>
+                    <div class="prompt-actions" onclick="event.stopPropagation()">
+                        <button class="btn btn-edit" onclick="window.automator.editPrompt(${index})" title="Edit">✏️</button>
+                        <button class="btn btn-delete" onclick="window.automator.deletePrompt(${index})" title="Delete">🗑️</button>
+                    </div>
+                </div>
+                <div class="prompt-content">
+                    <div class="prompt-text">${prompt}</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async editPrompt(index) {
+        const newText = prompt('Edit prompt:', this.prompts[index]);
+        if (newText !== null && newText.trim()) {
+            this.prompts[index] = newText.trim();
+            await this.savePrompts();
+            this.renderPrompts();
+        }
+    }
+
+    async deletePrompt(index) {
+        if (confirm('Delete this prompt?')) {
+            this.prompts.splice(index, 1);
+            await this.savePrompts();
+            this.renderPrompts();
+            this.updatePromptCount();
+            this.updateStartButton();
+        }
+    }
+
+    updatePromptCount() {
+        this.promptCount.textContent = this.prompts.length;
+    }
+
+    updateStartButton() {
+        this.startAutomationBtn.disabled = this.prompts.length === 0;
+    }
+
+    async savePrompts() {
+        try {
+            await browser.storage.local.set({ prompts: this.prompts });
+        } catch (error) {
+            this.logError('Failed to save prompts:', error);
+        }
+    }
+
+    async loadPrompts() {
+        try {
+            const result = await browser.storage.local.get(['prompts']);
+            this.prompts = result.prompts || [];
+            this.renderPrompts();
+            this.updatePromptCount();
+            this.updateStartButton();
+            this.validateInput();
+        } catch (error) {
+            this.logError('Failed to load prompts:', error);
+        }
+    }
 }
 
-// Initialize the automator when the popup loads
-const automator = new PerplexityAutomator();
+// NEW: Document Management Class
+class DocumentManager {
+    constructor() {
+        this.document = {
+            title: 'PERPLEXITY AI AUTOMATION REPORT',
+            timestamp: null,
+            totalPrompts: 0,
+            responses: [],
+            summary: null
+        };
+    }
+
+    initializeDocument(totalPrompts) {
+        this.document = {
+            title: 'PERPLEXITY AI AUTOMATION REPORT',
+            timestamp: new Date().toISOString(),
+            totalPrompts: totalPrompts,
+            responses: [],
+            summary: null
+        };
+    }
+
+    addResponse(promptNumber, promptText, responseText) {
+        // Check if response already exists to prevent duplicates
+        const existingIndex = this.document.responses.findIndex(r => r.promptNumber === promptNumber);
+        
+        if (existingIndex >= 0) {
+            // Update existing response
+            this.document.responses[existingIndex] = {
+                promptNumber,
+                promptText,
+                responseText,
+                timestamp: new Date().toISOString()
+            };
+        } else {
+            // Add new response
+            this.document.responses.push({
+                promptNumber,
+                promptText,
+                responseText,
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        // Sort responses by prompt number
+        this.document.responses.sort((a, b) => a.promptNumber - b.promptNumber);
+    }
+
+    finalizeDocument(summary) {
+        this.document.summary = summary;
+        this.document.finalizedAt = new Date().toISOString();
+    }
+
+    hasResponses() {
+        return this.document.responses.length > 0;
+    }
+
+    getResponseCount() {
+        return this.document.responses.length;
+    }
+
+    clearDocument() {
+        this.document.responses = [];
+        this.document.summary = null;
+    }
+
+    generateTextDocument() {
+        let content = `${this.document.title}\n`;
+        content += `Generated: ${new Date(this.document.timestamp).toLocaleString()}\n`;
+        content += `Total Prompts: ${this.document.totalPrompts}\n`;
+        
+        if (this.document.summary) {
+            content += `Completed: ${this.document.summary.successful} successful, ${this.document.summary.failed} failed\n`;
+            content += `Success Rate: ${this.document.summary.successRate}%\n`;
+        }
+        
+        content += `${'='.repeat(80)}\n\n`;
+
+        this.document.responses.forEach((response, index) => {
+            content += `PROMPT ${response.promptNumber}: ${response.promptText}\n\n`;
+            content += `RESPONSE ${response.promptNumber}:\n`;
+            content += `${response.responseText}\n\n`;
+            content += `${'='.repeat(80)}\n\n`;
+        });
+
+        if (this.document.summary) {
+            content += `\nAUTOMATION SUMMARY\n`;
+            content += `${'='.repeat(80)}\n`;
+            content += `Total Prompts: ${this.document.summary.total}\n`;
+            content += `Successful: ${this.document.summary.successful}\n`;
+            content += `Failed: ${this.document.summary.failed}\n`;
+            content += `Success Rate: ${this.document.summary.successRate}%\n`;
+            content += `With Responses: ${this.document.summary.withResponses}\n`;
+            content += `Response Rate: ${this.document.summary.responseRate}%\n`;
+            if (this.document.summary.duration) {
+                const duration = Math.round(this.document.summary.duration / 1000);
+                content += `Duration: ${duration} seconds\n`;
+            }
+        }
+
+        return content;
+    }
+
+    async downloadTxt() {
+        try {
+
+            const content = this.generateTextDocument();
+            const dataUrl = 'data:text/plain;charset=utf-8,' + encodeURIComponent(content);
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const filename = `perplexity-automation-${timestamp}.txt`;
+
+            await browser.downloads.download({
+              url: dataUrl,
+              filename: filename,
+              saveAs: true
+            });
+
+            console.log('Text document downloaded:', filename);
+        } catch (error) {
+            console.error('Failed to download text document:', error);
+            throw error;
+        }
+    }
+
+    async downloadDocx() {
+        // For now, create an enhanced text format that's docx-compatible
+        // This could be enhanced with proper DOCX generation in the future
+        try {
+
+            const content = this.generateRichTextDocument();
+            const dataUrl = 'data:application/rtf;charset=utf-8,' + encodeURIComponent(rtf);
+            
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const filename = `perplexity-automation-${timestamp}.docx`;
+
+            await browser.downloads.download({
+              url: dataUrl,
+              filename: filename,
+              saveAs: true
+            });
+
+            console.log('DOCX document downloaded:', filename);
+        } catch (error) {
+            console.error('Failed to download DOCX document:', error);
+            // Fallback to text format
+            await this.downloadTxt();
+        }
+    }
+
+    generateRichTextDocument() {
+        // Generate RTF format which can be opened by Word
+        let rtf = '{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Times New Roman;}}';
+        
+        // Title
+        rtf += '{\\f0\\fs28\\b ' + this.document.title + '}\\par\\par';
+        
+        // Metadata
+        rtf += '{\\f0\\fs20 Generated: ' + new Date(this.document.timestamp).toLocaleString() + '}\\par';
+        rtf += '{\\f0\\fs20 Total Prompts: ' + this.document.totalPrompts + '}\\par\\par';
+        
+        if (this.document.summary) {
+            rtf += '{\\f0\\fs20 Completed: ' + this.document.summary.successful + ' successful, ' + this.document.summary.failed + ' failed}\\par';
+            rtf += '{\\f0\\fs20 Success Rate: ' + this.document.summary.successRate + '%}\\par\\par';
+        }
+
+        // Responses
+        this.document.responses.forEach((response) => {
+            rtf += '{\\f0\\fs22\\b PROMPT ' + response.promptNumber + ':}\\par';
+            rtf += '{\\f0\\fs20 ' + this.escapeRtf(response.promptText) + '}\\par\\par';
+            rtf += '{\\f0\\fs22\\b RESPONSE ' + response.promptNumber + ':}\\par';
+            rtf += '{\\f0\\fs20 ' + this.escapeRtf(response.responseText) + '}\\par\\par';
+            rtf += '\\line\\par';
+        });
+
+        rtf += '}';
+        return rtf;
+    }
+
+    escapeRtf(text) {
+        return text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}');
+    }
+}
+
+// Initialize the automator
+window.automator = new PerplexityAutomator();

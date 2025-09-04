@@ -49,6 +49,34 @@
                 </div>
             </section>
 
+            <!-- Document Management Section - NEW -->
+            <section class="document-section">
+                <div class="section-header">
+                    <h2>Document Management</h2>
+                    <div class="document-status">
+                        <span id="documentStatus" class="status status--info">Ready</span>
+                    </div>
+                </div>
+                <div class="document-actions">
+                    <button id="downloadTxtBtn" class="btn btn-secondary" disabled>
+                        <span class="btn-icon">📄</span>
+                        Download .txt
+                    </button>
+                    <button id="downloadDocxBtn" class="btn btn-secondary" disabled>
+                        <span class="btn-icon">📋</span>
+                        Download .docx
+                    </button>
+                    <button id="clearDocumentBtn" class="btn btn-text" disabled>
+                        Clear Document
+                    </button>
+                </div>
+                <div class="document-preview">
+                    <div class="document-stats">
+                        <span id="responseCount">0</span> responses collected
+                    </div>
+                </div>
+            </section>
+
             <section class="automation-section">
                 <button id="startAutomationBtn" class="btn btn-success" disabled>
                     <span class="btn-icon">▶</span>
@@ -68,7 +96,9 @@
                 <div class="progress-bar">
                     <div id="progressFill" class="progress-fill"></div>
                 </div>
-                <div id="currentPrompt" class="current-prompt"></div>
+                <div id="currentPrompt" class="current-prompt">
+                    Ready to start automation...
+                </div>
                 <div id="automationLog" class="automation-log"></div>
             </section>
         </main>
