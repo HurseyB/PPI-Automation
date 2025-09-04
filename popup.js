@@ -32,6 +32,10 @@ class PerplexityAutomator {
         this.documentManager = new DocumentManager(); // Document management
         // Initialize company name in DocumentManager (populated from tab state or UI state)
         this.documentManager.companyName = '';
+        // NEW: Set current tab ID for document manager
+        browser.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+          this.documentManager.setTabId(tab.id);
+        });
         this.initializeElements();
         this.initializeNotificationSettings();
         this.bindEventListeners();
@@ -43,6 +47,8 @@ class PerplexityAutomator {
             if (!this.documentManager.hasResponses()) {
               // Sync only for current active tab
               const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+              // Ensure document manager has the correct tab ID
+              this.documentManager.setTabId(tab.id);
               const response = await browser.runtime.sendMessage({
                 type: 'get-tab-document-data',
                 tabId: tab.id
@@ -836,6 +842,7 @@ class PerplexityAutomator {
 class DocumentManager {
     constructor() {
         this.companyName = 'Company';
+        this.tabId = null; // Track which tab this belongs to
         this.document = {
             title: 'Perplexity AI Automation Results',
             timestamp: null,
@@ -844,21 +851,33 @@ class DocumentManager {
         };
     }
 
+    // NEW: Set the tab ID for this document manager
+    setTabId(tabId) {
+      this.tabId = tabId;
+    }
+
+    // NEW: Get tab-specific storage key
+    getStorageKey() {
+      return this.tabId ? `popupDocument_tab_${this.tabId}` : 'popupDocument';
+    }
+
     async loadDocumentState() {
-        try {
-            const result = await browser.storage.local.get(['popupDocument']);
-            if (result.popupDocument) {
-                this.document = result.popupDocument;
-                console.log('Document state loaded:', this.getResponseCount(), 'responses');
-            }
-        } catch (error) {
-            console.error('Failed to load document state:', error);
+      try {
+        const storageKey = this.getStorageKey();
+        const result = await browser.storage.local.get([storageKey]);
+        if (result[storageKey]) {
+          this.document = result[storageKey];
+          console.log('Document state loaded:', this.getResponseCount(), 'responses');
         }
+      } catch (error) {
+        console.error('Failed to load document state:', error);
+      }
     }
 
     async saveDocumentState() {
         try {
-            await browser.storage.local.set({ popupDocument: this.document });
+            const storageKey = this.getStorageKey();
+            await browser.storage.local.set({ [storageKey]: this.document });
         } catch (error) {
             console.error('Failed to save document state:', error);
         }
@@ -866,7 +885,12 @@ class DocumentManager {
 
     async syncWithBackground() {
         try {
-            const response = await browser.runtime.sendMessage({ type: 'get-document-data' });
+            // NEW: Pass current tab ID to get tab-specific document data
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            const response = await browser.runtime.sendMessage({
+              type: 'get-document-data',
+              tabId: tab.id
+            });
             if (response && response.document && response.document.responses.length > 0) {
                 // Map background document structure to popup structure
                 this.document = {

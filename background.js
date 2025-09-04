@@ -198,7 +198,12 @@ class AutomationManager {
           break;
         case 'get-document-data':
             // Use tab-specific document data if tabId provided
-            const requestedTabId = message.tabId || this.currentTabId;
+            // NEW: Require tabId to be explicitly provided
+            const requestedTabId = message.tabId;
+            if (!requestedTabId) {
+              sendResponse({ error: 'tabId is required for get-document-data' });
+              break;
+            }
             const documentData = await this.getTabDocumentData(requestedTabId);
             sendResponse(documentData);
             break;
@@ -1199,36 +1204,44 @@ class AutomationManager {
  */
 class BackgroundDocumentManager {
     constructor() {
-        this.document = {
-            title: 'Perplexity AI Automation Results',
-            timestamp: null,
-            prompts: [],
-            responses: [],
-            summary: null,
-            totalPrompts: 0,
-            completedPrompts: 0
-        };
-        this.loadDocumentState();
+      this.tabId = null; // Track which tab this belongs to
+      this.document = {
+        title: 'Perplexity AI Automation Results',
+        timestamp: null,
+        prompts: [],
+        responses: [],
+        summary: null,
+        totalPrompts: 0,
+        completedPrompts: 0
+      };
+      this.loadDocumentState();
+    }
+
+    // NEW: Get tab-specific storage key
+    getStorageKey() {
+      return this.tabId ? `backgroundDocument_tab_${this.tabId}` : 'backgroundDocument';
     }
 
     async loadDocumentState() {
-        try {
-            const result = await browser.storage.local.get(['backgroundDocument']);
-            if (result.backgroundDocument) {
-                this.document = result.backgroundDocument;
-                console.log('Background document state loaded:', this.getResponseCount(), 'responses');
-            }
-        } catch (error) {
-            console.error('Failed to load background document state:', error);
+      try {
+        const storageKey = this.getStorageKey();
+        const result = await browser.storage.local.get([storageKey]);
+        if (result[storageKey]) {
+          this.document = result[storageKey];
+          console.log('Background document state loaded:', this.getResponseCount(), 'responses');
         }
+      } catch (error) {
+        console.error('Failed to load background document state:', error);
+      }
     }
 
     async saveDocumentState() {
-        try {
-            await browser.storage.local.set({ backgroundDocument: this.document });
-        } catch (error) {
-            console.error('Failed to save background document state:', error);
-        }
+      try {
+        const storageKey = this.getStorageKey();
+        await browser.storage.local.set({ [storageKey]: this.document });
+      } catch (error) {
+        console.error('Failed to save background document state:', error);
+      }
     }
 
     initializeDocument(totalPrompts) {
