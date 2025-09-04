@@ -1,6 +1,6 @@
 /**
  * Perplexity AI Automator - Content Script
- * Fixed: Prevent duplicate completion messages
+ * Fixed: Ensure proper response waiting before completion
  */
 
 class PerplexityAutomator {
@@ -11,9 +11,9 @@ class PerplexityAutomator {
     this.maxRetries = 3;
     this.submitDelay = 1500;
     this.waitTimeout = 10000;
-    this.responseTimeout = 45000;
+    this.responseTimeout = 60000; // Increased timeout for response
     this.isExecuting = false;
-    this.hasCompletedCurrentPrompt = false; // Add flag to prevent duplicates
+    this.hasCompletedCurrentPrompt = false;
     this.selectors = {
       textareas: [
         'textarea',
@@ -145,17 +145,26 @@ class PerplexityAutomator {
     this.currentPrompt = prompt;
     this.retryCount = 0;
     this.isExecuting = true;
-    this.hasCompletedCurrentPrompt = false; // Reset completion flag
+    this.hasCompletedCurrentPrompt = false;
+
+    const startTime = Date.now();
 
     try {
       // Step 1: Submit the prompt
+      this.log(`Step 1: Submitting prompt ${index + 1}`);
       await this.processPrompt(prompt);
-
-      // Step 2: Wait for and extract AI response
+      
+      // Step 2: Wait for AI response to be fully generated
+      this.log(`Step 2: Waiting for AI response for prompt ${index + 1}`);
       const { responseText, error } = await this.waitForResponseText();
-      if (error) throw new Error(error);
+      
+      if (error) {
+        throw new Error(error);
+      }
 
-      // Step 3: Notify background of completion (only once)
+      this.log(`Step 3: Response received for prompt ${index + 1}, length: ${responseText.length}`);
+
+      // Step 3: Mark as completed and notify background
       if (!this.hasCompletedCurrentPrompt) {
         this.hasCompletedCurrentPrompt = true;
         await browser.runtime.sendMessage({
@@ -166,10 +175,10 @@ class PerplexityAutomator {
             timestamp: Date.now(),
             success: true,
             response: responseText,
-            startTime: Date.now()
+            startTime: startTime
           }
         });
-        this.log(`Prompt ${index + 1} completed successfully`);
+        this.log(`Prompt ${index + 1} completed successfully with response`);
       }
 
     } catch (error) {
@@ -188,13 +197,16 @@ class PerplexityAutomator {
   }
 
   async processPrompt(prompt) {
+    // Wait for any existing responses to finish loading first
+    await this.waitForPageToSettle();
+
     // Find and focus input element
     const inputElement = await this.waitForInputElement();
     if (!inputElement) throw new Error('Input element not found');
 
-    // Clear and insert new text
+    // Clear existing content and insert new text
     await this.insertText(inputElement, prompt);
-    await this.sleep(500);
+    await this.sleep(1000); // Increased delay to ensure text is set
 
     // Find and click submit button
     const submitButton = await this.waitForSubmitButton();
@@ -202,7 +214,33 @@ class PerplexityAutomator {
 
     await this.sleep(this.submitDelay);
     await this.clickSubmit(submitButton);
-    this.log('Prompt submitted successfully');
+    this.log('Prompt submitted successfully, now waiting for response...');
+  }
+
+  async waitForPageToSettle() {
+    // Wait for any existing loading states to complete
+    this.log('Waiting for page to settle...');
+    
+    let settleAttempts = 0;
+    const maxSettleAttempts = 10;
+    
+    while (settleAttempts < maxSettleAttempts) {
+      const loadingElements = document.querySelectorAll(
+        '[role="progressbar"], [aria-busy="true"], .Loader, svg[aria-label="Loading"], [data-testid*="spinner"], [data-testid*="loading"]'
+      );
+      
+      if (loadingElements.length === 0) {
+        this.log('Page settled, no loading elements found');
+        break;
+      }
+      
+      this.log(`Found ${loadingElements.length} loading elements, waiting...`);
+      await this.sleep(500);
+      settleAttempts++;
+    }
+    
+    // Additional wait to ensure UI is stable
+    await this.sleep(1000);
   }
 
   async waitForInputElement(timeout = this.waitTimeout) {
@@ -297,12 +335,43 @@ class PerplexityAutomator {
   async insertText(element, text) {
     try {
       element.focus();
-      await this.sleep(100);
+      await this.sleep(200); // Increased delay
+      
+      // Clear existing content first
+      this.clearElement(element);
+      await this.sleep(200);
+      
+      // Insert new text
       this.replaceValue(element, text);
-      this.log('Text inserted successfully');
+      await this.sleep(200);
+      
+      this.log('Text inserted successfully:', text.substring(0, 50) + '...');
     } catch (error) {
       this.logError('Failed to insert text:', error);
       throw new Error('Text insertion failed: ' + error.message);
+    }
+  }
+
+  clearElement(element) {
+    try {
+      element.focus();
+      
+      // Select all content
+      if (element.tagName.toLowerCase() === 'textarea' || element.tagName.toLowerCase() === 'input') {
+        element.select();
+        element.value = '';
+      } else if (element.contentEditable === 'true') {
+        element.focus();
+        document.execCommand('selectAll');
+        document.execCommand('delete');
+        element.textContent = '';
+      }
+      
+      // Trigger events
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (error) {
+      this.logError('Error clearing element:', error);
     }
   }
 
@@ -311,22 +380,21 @@ class PerplexityAutomator {
 
     try {
       element.focus();
-      // Select all existing content
-      document.execCommand('selectAll');
       
-      // Try modern insertText first, fallback to direct assignment
-      if (!document.execCommand('insertText', false, value)) {
-        if (element.tagName.toLowerCase() === 'textarea' || element.tagName.toLowerCase() === 'input') {
-          element.value = value;
-        } else if (element.contentEditable === 'true') {
-          element.textContent = value;
-        }
+      // Try modern approach first
+      if (document.execCommand && document.execCommand('insertText', false, value)) {
+        // Success with insertText
+      } else if (element.tagName.toLowerCase() === 'textarea' || element.tagName.toLowerCase() === 'input') {
+        element.value = value;
+      } else if (element.contentEditable === 'true') {
+        element.textContent = value;
       }
 
       // Trigger events to notify React/frameworks
       element.dispatchEvent(new Event('input', { bubbles: true }));
       element.dispatchEvent(new Event('change', { bubbles: true }));
       element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
     } catch (error) {
       this.logError('Error in replaceValue:', error);
@@ -343,19 +411,21 @@ class PerplexityAutomator {
       }
 
       button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      await this.sleep(500); // Increased delay
+
+      // Focus the button first
+      button.focus();
       await this.sleep(200);
 
-      // Dispatch comprehensive mouse event sequence
+      // Dispatch comprehensive event sequence
       const rect = button.getBoundingClientRect();
       const clientX = rect.left + rect.width / 2;
       const clientY = rect.top + rect.height / 2;
 
-      // Focus the button first
-      button.focus();
-
-      // Create and dispatch mouse events in proper sequence
-      ['mousedown', 'mouseup', 'click'].forEach(type => {
-        const event = new MouseEvent(type, {
+      // Create and dispatch mouse events
+      const events = ['mousedown', 'mouseup', 'click'];
+      for (const eventType of events) {
+        const event = new MouseEvent(eventType, {
           view: window,
           bubbles: true,
           cancelable: true,
@@ -364,9 +434,10 @@ class PerplexityAutomator {
           button: 0
         });
         button.dispatchEvent(event);
-      });
+        await this.sleep(50); // Small delay between events
+      }
 
-      this.log('Submit button clicked via MouseEvent sequence');
+      this.log('Submit button clicked successfully');
     } catch (error) {
       this.logError('Failed to click submit button:', error);
       throw new Error('Submit click failed: ' + error.message);
@@ -427,10 +498,13 @@ class PerplexityAutomator {
     return new Promise(async (resolve) => {
       let resolved = false;
       let timeoutId;
+      let lastResponseLength = 0;
+      let stableCount = 0;
+      const stableThreshold = 3; // Number of consecutive checks with same length
 
       // Store initial response nodes to detect new ones
       const initialNodes = new Set(document.querySelectorAll(this.selectors.responseContainers.join(', ')));
-
+      
       const getLatestResponseNode = () => {
         // Look for response nodes that appeared after submission
         for (const selector of this.selectors.responseContainers) {
@@ -443,7 +517,7 @@ class PerplexityAutomator {
             }
           }
 
-          // Fallback to last visible node
+          // Fallback to last visible node if no new nodes
           if (nodes.length > 0) {
             for (let i = nodes.length - 1; i >= 0; i--) {
               if (this.isVisibleAndInteractive(nodes[i])) {
@@ -456,10 +530,13 @@ class PerplexityAutomator {
       };
 
       const tryExtractResponse = () => {
-        if (resolved) return null; // Prevent multiple extractions
+        if (resolved) return null;
         
         let responseNode = getLatestResponseNode();
-        if (!responseNode) return null;
+        if (!responseNode) {
+          this.log('No response node found yet...');
+          return null;
+        }
 
         // Check if still loading
         const loadingSpinner = responseNode.querySelector(
@@ -467,18 +544,33 @@ class PerplexityAutomator {
         );
 
         if (loadingSpinner) {
-          this.log('Response still loading...');
+          this.log('Response still loading (spinner found)...');
           return null;
         }
 
-        // Extract response text directly without cloning
+        // Extract response text
         const text = this.extractCleanedResponseText(responseNode);
-        if (text && text.length > 10) { // Minimum meaningful response length
-          this.log('Response extracted successfully:', text.substring(0, 100) + '...');
-          return { text };
+        if (!text || text.length < 10) {
+          this.log('Response text too short or empty:', text?.length || 0);
+          return null;
         }
 
-        return null;
+        // Check if response has stabilized (stopped growing)
+        if (text.length === lastResponseLength) {
+          stableCount++;
+        } else {
+          stableCount = 0;
+          lastResponseLength = text.length;
+        }
+
+        // Only return response if it's stable for several checks
+        if (stableCount >= stableThreshold) {
+          this.log('Response extracted successfully:', text.substring(0, 100) + '...', 'Length:', text.length);
+          return { text };
+        } else {
+          this.log(`Response still growing: ${text.length} chars (stable: ${stableCount}/${stableThreshold})`);
+          return null;
+        }
       };
 
       // Set up MutationObserver to watch for changes
@@ -520,14 +612,17 @@ class PerplexityAutomator {
         characterData: true
       });
 
-      // Also use polling as backup
+      // Polling as backup with shorter intervals
       let pollTries = 0;
-      const pollInterval = 1000; // Check every second
+      const pollInterval = 2000; // Check every 2 seconds
+      const maxPolls = Math.floor(timeout / pollInterval);
 
       const poll = async () => {
         if (resolved) return;
         
         pollTries++;
+        this.log(`Polling for response attempt ${pollTries}/${maxPolls}`);
+        
         const result = tryExtractResponse();
         if (result && !resolved) {
           resolved = true;
@@ -540,7 +635,7 @@ class PerplexityAutomator {
           return;
         }
 
-        if (pollTries * pollInterval >= timeout) {
+        if (pollTries >= maxPolls) {
           if (!resolved) {
             resolved = true;
             observer.disconnect();
@@ -554,8 +649,8 @@ class PerplexityAutomator {
         }
       };
 
-      // Start polling
-      setTimeout(poll, 2000); // Wait 2 seconds before first poll
+      // Start polling after initial delay
+      setTimeout(poll, 3000); // Wait 3 seconds before first poll
 
       // Set overall timeout
       timeoutId = setTimeout(() => {

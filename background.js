@@ -1,6 +1,6 @@
 /**
  * Enhanced Perplexity AI Automator - Background Script
- * Fixed: Prevent duplicate completion handling and ensure proper prompt indexing
+ * Fixed: Increased timeouts and proper sequencing
  */
 
 class AutomationManager {
@@ -15,13 +15,13 @@ class AutomationManager {
     this.currentTimeout = null;
     this.retryAttempts = new Map();
     this.isProcessingPrompt = false;
-    this.completedPrompts = new Set(); // Track completed prompts to prevent duplicates
+    this.completedPrompts = new Set();
     this.settings = {
-      delay: 3000,
+      delay: 5000, // Increased delay between prompts
       maxRetries: 3,
-      timeout: 60000,
-      retryDelay: 5000,
-      responseTimeout: 45000,
+      timeout: 120000, // Increased to 2 minutes
+      retryDelay: 10000, // Increased retry delay
+      responseTimeout: 90000, // Increased response timeout
       enableRetries: true,
       pauseOnError: false
     };
@@ -169,7 +169,7 @@ class AutomationManager {
     this.automationId = Date.now();
     this.processedResults = [];
     this.retryAttempts.clear();
-    this.completedPrompts.clear(); // Clear completed prompts set
+    this.completedPrompts.clear();
     this.isProcessingPrompt = false;
 
     this.log(`Starting automation with ${prompts.length} prompts on tab ${tabId}`);
@@ -292,7 +292,7 @@ class AutomationManager {
 
     // Update progress - show current processing prompt number
     await this.sendMessageToPopup('automation-progress', {
-      current: promptNumber, // Use prompt number for processing status
+      current: promptNumber,
       total: this.prompts.length,
       prompt: currentPrompt,
       status: 'processing'
@@ -305,7 +305,7 @@ class AutomationManager {
         throw new Error('Tab is no longer valid or not on Perplexity.ai');
       }
 
-      // Send prompt to content script
+      // Send prompt to content script with increased timeouts
       await browser.tabs.sendMessage(this.currentTabId, {
         type: 'execute-prompt',
         prompt: currentPrompt,
@@ -315,7 +315,7 @@ class AutomationManager {
         automationId: this.automationId
       });
 
-      // Set timeout for prompt execution
+      // Set timeout for prompt execution (longer timeout)
       this.currentTimeout = setTimeout(() => {
         this.handlePromptTimeout();
       }, this.settings.timeout);
@@ -381,6 +381,7 @@ class AutomationManager {
 
     // Wait before next prompt or complete
     if (this.currentPromptIndex < this.prompts.length) {
+      this.log(`Waiting ${this.settings.delay}ms before next prompt...`);
       this.currentTimeout = setTimeout(() => {
         if (this.isRunning && !this.isPaused) {
           this.processNextPrompt();
@@ -734,7 +735,7 @@ class AutomationManager {
         automationId: this.automationId,
         processedResults: this.processedResults,
         retryAttempts: Array.from(this.retryAttempts.entries()),
-        completedPrompts: Array.from(this.completedPrompts), // Save completed prompts
+        completedPrompts: Array.from(this.completedPrompts),
         isProcessingPrompt: this.isProcessingPrompt,
         timestamp: Date.now()
       };
