@@ -104,11 +104,15 @@ class AutomationManager {
       switch (message.type) {
         case 'start-automation':
           await this.startAutomation(message.prompts, message.tabId);
+          // Show overlay when automation starts
+          await this.updateStatusOverlay(message.tabId, 'progress', 'In Progress');
           sendResponse({ success: true });
           break;
         case 'reset-automation':
           // Stop all running automations or specific tab
           await this.stopAutomation(message.tabId);
+          // Hide overlay when automation is reset
+          await this.hideStatusOverlay(message.tabId);
           sendResponse({ success: true });
           break;
         case 'pause-automation':
@@ -164,6 +168,13 @@ class AutomationManager {
           break;
         case 'content-script-ready':
           await this.handleContentScriptReady(sender.tab.id);
+          // If automation already running on this tab, show overlay
+          const contentTabState = this.getTabState(sender.tab.id);
+          if (contentTabState && contentTabState.isRunning) {
+            const status = contentTabState.isPaused ? 'paused' : 'progress';
+            const text = contentTabState.isPaused ? 'Analysis Paused' : 'In Progress';
+            await this.updateStatusOverlay(sender.tab.id, status, text);
+          }
           sendResponse({ success: true });
           break;
         case 'prompt-completed':
@@ -242,6 +253,32 @@ class AutomationManager {
     }
   }
 
+  // NEW: Update status overlay via content script
+  async updateStatusOverlay(tabId, status, message) {
+      try {
+          await browser.tabs.sendMessage(tabId, {
+              type: 'show-status-overlay',
+              status: status,
+              message: message
+          });
+          this.log(`Status overlay updated for tab ${tabId}: ${status} - ${message}`);
+      } catch (error) {
+          this.logError(`Failed to update status overlay for tab ${tabId}:`, error);
+      }
+  }
+
+  // NEW: Hide status overlay via content script
+  async hideStatusOverlay(tabId) {
+      try {
+          await browser.tabs.sendMessage(tabId, {
+              type: 'hide-status-overlay'
+          });
+          this.log(`Status overlay hidden for tab ${tabId}`);
+      } catch (error) {
+          this.logError(`Failed to hide status overlay for tab ${tabId}:`, error);
+      }
+  }
+
   // NEW: Update tab title via content script
   async updateTabTitle(tabId, companyName) {
     try {
@@ -312,6 +349,9 @@ class AutomationManager {
 
       // Start processing prompts
       await this.processNextPrompt(tabId);
+
+      // Show overlay status
+      await this.updateStatusOverlay(tabId, 'progress', 'In Progress');
   }
 
 
@@ -375,6 +415,8 @@ class AutomationManager {
       results: tabState.processedResults,
       tabId: tabId
     });
+    // Hide overlay when automation is stopped
+    await this.hideStatusOverlay(tabId);
   }
 
   async pauseAutomation(tabId) {
@@ -393,6 +435,8 @@ class AutomationManager {
       total: tabState.prompts.length,
       tabId: tabId
     });
+    // Update overlay status
+    await this.updateStatusOverlay(tabId, 'paused', 'Analysis Paused');
   }
 
   async resumeAutomation(tabId) {
@@ -414,6 +458,8 @@ class AutomationManager {
     if (!tabState.isProcessingPrompt) {
       await this.processNextPrompt(tabId);
     }
+    // Update overlay status
+    await this.updateStatusOverlay(tabId, 'progress', 'In Progress');
   }
 
   async processNextPrompt(tabId) {
@@ -750,6 +796,9 @@ class AutomationManager {
       automationId: tabState.automationId
     });
     await this.showCompletionNotification(summary);
+
+    // Update overlay status
+    await this.updateStatusOverlay(tabId, 'complete', 'Analyses Complete');
   }
 
   generateAutomationSummary(tabId) {
@@ -1072,16 +1121,19 @@ class AutomationManager {
   }
 
   async handleTabRemoved(tabId) {
-      // Clean up per-tab state
-      this.cleanupTabState(tabId);
+    // Clean up per-tab state
+    this.cleanupTabState(tabId);
 
-      if (this.isRunning && tabId === this.currentTabId) {
-          this.log('Automation tab was closed');
-          await this.sendMessageToPopup('automation-error', {
-              error: 'Automation tab was closed'
-          });
-          await this.stopAutomation();
-      }
+    if (this.isRunning && tabId === this.currentTabId) {
+      this.log('Automation tab was closed');
+      await this.sendMessageToPopup('automation-error', {
+        error: 'Automation tab was closed'
+      });
+      await this.stopAutomation();
+    }
+
+    // Clean up overlay when tab is removed
+    await this.hideStatusOverlay(tabId);
   }
 
   async validateTab(tabId) {

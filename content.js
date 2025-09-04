@@ -20,6 +20,11 @@ class PerplexityAutomator {
     this.isExecuting = false;
     this.hasCompletedCurrentPrompt = false;
 
+    // NEW: Overlay management
+    this.overlay = null;
+    this.overlayVisible = true; // Track if user has closed overlay
+    this.currentStatus = null; // Track current status to detect changes
+
     this.selectors = {
       textareas: [
         'textarea',
@@ -64,18 +69,175 @@ class PerplexityAutomator {
       ]
     };
 
+    this.initializeOverlayStyles();
     this.setupMessageListener();
     this.waitForPageReady();
   }
 
+  // NEW: Initialize overlay CSS styles
+  initializeOverlayStyles() {
+      if (document.getElementById('perplexity-automator-overlay-styles')) return;
+
+      const style = document.createElement('style');
+      style.id = 'perplexity-automator-overlay-styles';
+      style.textContent = `
+          .perplexity-automator-overlay {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 10000;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 12px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            animation: slideInFromRight 0.3s ease-out;
+            min-width: 120px;
+            max-width: 200px;
+          }
+
+          .perplexity-automator-overlay.status-progress {
+            background-color: #fbbf24; /* Yellow */
+            color: #000000; /* Black */
+          }
+
+          .perplexity-automator-overlay.status-paused {
+              background-color: #dc2626; /* Red */
+              color: #ffffff; /* White */
+          }
+
+          .perplexity-automator-overlay.status-complete {
+              background-color: #059669; /* Forest Green */
+              color: #ffffff; /* White */
+          }
+
+          .perplexity-automator-overlay-close {
+              background: none;
+              border: none;
+              color: inherit;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: bold;
+              padding: 0;
+              margin-left: 4px;
+              width: 16px;
+              height: 16px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              border-radius: 2px;
+              opacity: 0.7;
+              transition: opacity 0.2s;
+          }
+
+          .perplexity-automator-overlay-close:hover {
+              opacity: 1;
+          }
+
+          @keyframes slideInFromRight {
+              from {
+                  transform: translateX(100%);
+                  opacity: 0;
+              }
+              to {
+                  transform: translateX(0);
+                  opacity: 1;
+              }
+          }
+
+          @keyframes slideOutToRight {
+              from {
+                  transform: translateX(0);
+                  opacity: 1;
+              }
+              to {
+                  transform: translateX(100%);
+                  opacity: 0;
+              }
+          }
+      `;
+      document.head.appendChild(style);
+  }
+
+  // NEW: Create and show status overlay
+  showStatusOverlay(status, message) {
+      // Only show if status changed or overlay was previously closed by user
+      const statusChanged = this.currentStatus !== status;
+
+      if (statusChanged) {
+          this.overlayVisible = true; // Re-show overlay on status change
+          this.currentStatus = status;
+      }
+
+      if (!this.overlayVisible) return;
+
+      // Remove existing overlay
+      this.hideStatusOverlay();
+
+      // Create new overlay
+      this.overlay = document.createElement('div');
+      this.overlay.className = `perplexity-automator-overlay status-${status}`;
+
+      // Add message text
+      const messageSpan = document.createElement('span');
+      messageSpan.textContent = message;
+      this.overlay.appendChild(messageSpan);
+
+      // Add close button
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'perplexity-automator-overlay-close';
+      closeBtn.innerHTML = '×';
+      closeBtn.title = 'Close';
+      closeBtn.addEventListener('click', () => this.closeStatusOverlay());
+      this.overlay.appendChild(closeBtn);
+
+      // Add to page
+      document.body.appendChild(this.overlay);
+
+      console.log('Status overlay shown:', status, message);
+  }
+
+  // NEW: Close overlay (user initiated)
+  closeStatusOverlay() {
+      this.overlayVisible = false;
+      this.hideStatusOverlay();
+  }
+
+  // NEW: Hide overlay (programmatic)
+  hideStatusOverlay() {
+      if (this.overlay && this.overlay.parentNode) {
+          this.overlay.style.animation = 'slideOutToRight 0.3s ease-in';
+          setTimeout(() => {
+              if (this.overlay && this.overlay.parentNode) {
+                  this.overlay.parentNode.removeChild(this.overlay);
+              }
+              this.overlay = null;
+          }, 300);
+      }
+  }
+
   setupMessageListener() {
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message.type === 'execute-prompt') {
-        this.executePrompt(message.prompt, message.index);
-      } else if (message.type === 'stop-automation') {
-        this.isExecuting = false;
-      } else if (message.type === 'update-tab-title') {
-        this.updateTabTitle(message.companyName);
+      switch (message.type) {
+        case 'execute-prompt':
+          this.executePrompt(message.prompt, message.index);
+          break;
+        case 'stop-automation':
+          this.isExecuting = false;
+          break;
+        case 'update-tab-title':
+          this.updateTabTitle(message.companyName);
+          break;
+        case 'show-status-overlay':
+          this.showStatusOverlay(message.status, message.message);
+          break;
+        case 'hide-status-overlay':
+          this.hideStatusOverlay();
+          break;
       }
       sendResponse({ success: true });
       return true;
