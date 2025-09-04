@@ -1,6 +1,6 @@
 /**
  * Enhanced Perplexity AI Automator - Background Script
- * Fixed: Now waits for complete prompt processing before advancing
+ * Fixed: Corrected retry logic and prompt indexing
  */
 
 class AutomationManager {
@@ -14,13 +14,13 @@ class AutomationManager {
     this.processedResults = [];
     this.currentTimeout = null;
     this.retryAttempts = new Map();
-    this.isProcessingPrompt = false; // NEW: Track if currently processing
+    this.isProcessingPrompt = false;
     this.settings = {
       delay: 3000,
       maxRetries: 3,
-      timeout: 60000, // Increased timeout for full prompt cycle
+      timeout: 60000,
       retryDelay: 5000,
-      responseTimeout: 45000, // Increased for AI response
+      responseTimeout: 45000,
       enableRetries: true,
       pauseOnError: false
     };
@@ -286,11 +286,11 @@ class AutomationManager {
     const promptNumber = this.currentPromptIndex + 1;
     
     this.log(`Processing prompt ${promptNumber}/${this.prompts.length}: ${currentPrompt.substring(0, 50)}...`);
-    this.isProcessingPrompt = true; // Mark as processing
+    this.isProcessingPrompt = true;
 
-    // Update progress - ONLY when starting to process
+    // Update progress - show current processing prompt number
     await this.sendMessageToPopup('automation-progress', {
-      current: this.processedResults.length, // Use completed count, not current index
+      current: promptNumber, // Use prompt number for processing status
       total: this.prompts.length,
       prompt: currentPrompt,
       status: 'processing'
@@ -352,7 +352,7 @@ class AutomationManager {
 
     // Update progress with completion - use completed count
     await this.sendMessageToPopup('automation-progress', {
-      current: this.processedResults.length,
+      current: this.processedResults.length, // Now show completed count
       total: this.prompts.length,
       prompt: this.prompts[this.currentPromptIndex],
       status: 'completed',
@@ -380,48 +380,51 @@ class AutomationManager {
   }
 
   async handlePromptFailed(error, promptIndex) {
-    const promptNumber = (promptIndex || this.currentPromptIndex) + 1;
+    // Use the correct prompt index - either passed or current
+    const actualIndex = promptIndex !== undefined ? promptIndex : this.currentPromptIndex;
+    const promptNumber = actualIndex + 1;
+    
     this.logError(`Prompt ${promptNumber} failed:`, error);
     
     // Clear timeout and processing flag
     this.clearCurrentTimeout();
     this.isProcessingPrompt = false;
 
-    // Get current retry count
-    const currentRetries = this.retryAttempts.get(promptIndex || this.currentPromptIndex) || 0;
+    // Get current retry count for this specific prompt
+    const currentRetries = this.retryAttempts.get(actualIndex) || 0;
     const shouldRetry = this.settings.enableRetries &&
       currentRetries < this.settings.maxRetries &&
       this.isRetryableError(error);
 
     if (shouldRetry) {
-      // Increment retry count
-      this.retryAttempts.set(promptIndex || this.currentPromptIndex, currentRetries + 1);
+      // Increment retry count for this prompt
+      this.retryAttempts.set(actualIndex, currentRetries + 1);
       this.log(`Retrying prompt ${promptNumber} (attempt ${currentRetries + 1}/${this.settings.maxRetries})`);
 
       // Update progress with retry status
       await this.sendMessageToPopup('automation-progress', {
-        current: this.processedResults.length,
+        current: promptNumber,
         total: this.prompts.length,
-        prompt: this.prompts[this.currentPromptIndex],
+        prompt: this.prompts[actualIndex],
         status: 'retrying',
         retryCount: currentRetries + 1,
         maxRetries: this.settings.maxRetries,
         error: error
       });
 
-      // Wait longer before retry
+      // Wait longer before retry (don't increment currentPromptIndex)
       this.currentTimeout = setTimeout(() => {
         if (this.isRunning && !this.isPaused) {
-          this.processNextPrompt();
+          this.processNextPrompt(); // Retry same prompt
         }
       }, this.settings.retryDelay);
 
     } else {
       // Save failed result
       const failedResult = {
-        index: this.currentPromptIndex,
+        index: actualIndex,
         promptNumber: promptNumber,
-        prompt: this.prompts[this.currentPromptIndex],
+        prompt: this.prompts[actualIndex],
         response: '',
         timestamp: Date.now(),
         success: false,
@@ -431,13 +434,13 @@ class AutomationManager {
       };
 
       this.processedResults.push(failedResult);
-      await this.savePromptResult(this.currentPromptIndex, failedResult);
+      await this.savePromptResult(actualIndex, failedResult);
 
       // Update progress with failure
       await this.sendMessageToPopup('automation-progress', {
         current: this.processedResults.length,
         total: this.prompts.length,
-        prompt: this.prompts[this.currentPromptIndex],
+        prompt: this.prompts[actualIndex],
         status: 'failed',
         error: error,
         retryCount: currentRetries
@@ -447,13 +450,13 @@ class AutomationManager {
         await this.pauseAutomation();
         await this.sendMessageToPopup('automation-error', {
           error: `Prompt ${promptNumber} failed: ${error}`,
-          promptIndex: this.currentPromptIndex,
+          promptIndex: actualIndex,
           paused: true
         });
       } else {
         // Skip to next prompt
         this.currentPromptIndex++;
-        this.retryAttempts.delete(this.currentPromptIndex - 1);
+        this.retryAttempts.delete(actualIndex);
         await this.saveAutomationState();
         
         this.currentTimeout = setTimeout(() => {

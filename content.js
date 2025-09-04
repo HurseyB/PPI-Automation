@@ -1,6 +1,6 @@
 /**
  * Perplexity AI Automator - Content Script
- * Fixed: Now properly sequences prompt submission and response waiting
+ * Fixed: Removed DOM cloning and fixed response extraction
  */
 
 class PerplexityAutomator {
@@ -11,8 +11,8 @@ class PerplexityAutomator {
     this.maxRetries = 3;
     this.submitDelay = 1500;
     this.waitTimeout = 10000;
-    this.responseTimeout = 45000; // Increased for longer AI responses
-    this.isExecuting = false; // NEW: Prevent concurrent executions
+    this.responseTimeout = 45000;
+    this.isExecuting = false;
     this.selectors = {
       textareas: [
         'textarea',
@@ -150,7 +150,7 @@ class PerplexityAutomator {
       await this.processPrompt(prompt);
       
       // Step 2: Wait for and extract AI response  
-      const { responseText, rawNodes, error } = await this.waitForResponseText();
+      const { responseText, error } = await this.waitForResponseText();
       
       if (error) throw new Error(error);
 
@@ -163,7 +163,7 @@ class PerplexityAutomator {
           timestamp: Date.now(),
           success: true,
           response: responseText,
-          rawNodes: rawNodes
+          startTime: Date.now()
         }
       });
 
@@ -466,13 +466,12 @@ class PerplexityAutomator {
           return null;
         }
 
-        // Extract response text
-        const raw = this.extractRawResponse(responseNode);
-        const text = this.extractCleanedResponseText(raw);
+        // Extract response text directly without cloning
+        const text = this.extractCleanedResponseText(responseNode);
         
         if (text && text.length > 10) { // Minimum meaningful response length
           this.log('Response extracted successfully:', text.substring(0, 100) + '...');
-          return { text, raw, responseNode };
+          return { text };
         }
 
         return null;
@@ -503,7 +502,6 @@ class PerplexityAutomator {
             clearTimeout(timeoutId);
             resolve({
               responseText: result.text,
-              rawNodes: result.raw,
               error: null
             });
           }
@@ -534,7 +532,6 @@ class PerplexityAutomator {
           clearTimeout(timeoutId);
           resolve({
             responseText: result.text,
-            rawNodes: result.raw,
             error: null
           });
           return;
@@ -545,7 +542,6 @@ class PerplexityAutomator {
           observer.disconnect();
           resolve({
             responseText: "",
-            rawNodes: "",
             error: "AI response timeout after " + (timeout / 1000) + "s"
           });
         } else {
@@ -563,7 +559,6 @@ class PerplexityAutomator {
           observer.disconnect();
           resolve({
             responseText: '',
-            rawNodes: '',
             error: 'AI response timeout after ' + (timeout / 1000) + 's'
           });
         }
@@ -571,35 +566,31 @@ class PerplexityAutomator {
     });
   }
 
-  extractRawResponse(responseNode) {
-    return responseNode?.cloneNode(true) || null;
-  }
-
-  extractCleanedResponseText(rawNode) {
-    if (!rawNode) return '';
+  extractCleanedResponseText(node) {
+    if (!node) return '';
 
     let parts = [];
     
-    const traverse = (node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent.trim();
+    const traverse = (currentNode) => {
+      if (currentNode.nodeType === Node.TEXT_NODE) {
+        const text = currentNode.textContent.trim();
         if (text) parts.push(text);
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
+      } else if (currentNode.nodeType === Node.ELEMENT_NODE) {
         // Handle code blocks
-        if (node.tagName === 'PRE') {
-          parts.push('\n```\n' + node.textContent + '\n```\n');
+        if (currentNode.tagName === 'PRE') {
+          parts.push('\n```\n' + currentNode.textContent + '\n```\n');
           return;
         }
         
-        if (node.tagName === 'CODE' && !node.closest('pre')) {
-          parts.push('`' + node.textContent.trim() + '`');
+        if (currentNode.tagName === 'CODE' && !currentNode.closest('pre')) {
+          parts.push('`' + currentNode.textContent.trim() + '`');
           return;
         }
 
         // Handle lists
-        if (node.tagName === 'UL' || node.tagName === 'OL') {
-          const isOrdered = node.tagName === 'OL';
-          const items = Array.from(node.children)
+        if (currentNode.tagName === 'UL' || currentNode.tagName === 'OL') {
+          const isOrdered = currentNode.tagName === 'OL';
+          const items = Array.from(currentNode.children)
             .filter(child => child.tagName === 'LI')
             .map((li, idx) => {
               const prefix = isOrdered ? `${idx + 1}. ` : '- ';
@@ -613,7 +604,7 @@ class PerplexityAutomator {
         }
 
         // Handle paragraphs and line breaks
-        if (['P', 'DIV', 'BR'].includes(node.tagName)) {
+        if (['P', 'DIV', 'BR'].includes(currentNode.tagName)) {
           // Add spacing for block elements
           if (parts.length > 0 && !parts[parts.length - 1].endsWith('\n')) {
             parts.push('\n');
@@ -621,13 +612,13 @@ class PerplexityAutomator {
         }
 
         // Recurse through children
-        for (let child of node.childNodes) {
+        for (let child of currentNode.childNodes) {
           traverse(child);
         }
       }
     };
 
-    traverse(rawNode);
+    traverse(node);
 
     // Clean up and join parts
     let result = parts
