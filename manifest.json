@@ -1,0 +1,60 @@
+{
+  "manifest_version": 2,
+  "name": "Perplexity AI Automator",
+  "version": "1.0.0",
+  "description": "Automates running stored prompts sequentially on Perplexity.ai for enhanced workflow efficiency.",
+  
+  "permissions": [
+    "activeTab",
+    "storage",
+    "downloads",
+    "https://www.perplexity.ai/*"
+  ],
+  
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_title": "Perplexity AI Automator",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  
+  "content_scripts": [
+    {
+      "matches": ["https://www.perplexity.ai/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  
+  "web_accessible_resources": [
+    "popup.html",
+    "popup.css",
+    "popup.js"
+  ],
+  
+  "author": "Developer",
+  "homepage_url": "https://github.com/developer/perplexity-ai-automator",
+  
+  "applications": {
+    "gecko": {
+      "id": "perplexity-ai-automator@example.com",
+      "strict_min_version": "57.0"
+    }
+  }
+}

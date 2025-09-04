@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perplexity AI Automator</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1 class="title">Perplexity AI Automator</h1>
+            <div class="prompt-counter">
+                <span id="promptCount">0</span>/50 prompts
+            </div>
+        </header>
+
+        <main class="main-content">
+            <section class="add-prompt-section">
+                <textarea 
+                    id="promptInput" 
+                    class="prompt-input" 
+                    placeholder="Enter your prompt here..."
+                    rows="3"
+                    maxlength="1000"
+                ></textarea>
+                <div class="input-actions">
+                    <button id="addPromptBtn" class="btn btn-primary">
+                        <span class="btn-icon">+</span>
+                        Add Prompt
+                    </button>
+                    <button id="clearAllBtn" class="btn btn-secondary">
+                        Clear All
+                    </button>
+                </div>
+            </section>
+
+            <section class="prompts-section">
+                <div class="section-header">
+                    <h2>Saved Prompts</h2>
+                    <button id="toggleViewBtn" class="btn btn-text">
+                        Collapse All
+                    </button>
+                </div>
+                <div id="promptsList" class="prompts-list">
+                    <div class="empty-state">
+                        <p>No prompts saved yet. Add your first prompt above.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="automation-section">
+                <button id="startAutomationBtn" class="btn btn-success" disabled>
+                    <span class="btn-icon">▶</span>
+                    Start Automation
+                </button>
+                <button id="stopAutomationBtn" class="btn btn-danger" style="display: none;">
+                    <span class="btn-icon">⏹</span>
+                    Stop Automation
+                </button>
+            </section>
+
+            <section class="progress-section" style="display: none;">
+                <div class="progress-header">
+                    <h3>Automation Progress</h3>
+                    <span id="progressText">0 of 0 completed</span>
+                </div>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <div id="currentPrompt" class="current-prompt"></div>
+                <div id="automationLog" class="automation-log"></div>
+            </section>
+        </main>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
