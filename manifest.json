@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Perplexity AI Automator",
-  "version": "1.0.0",
+  "version": "5.15",
   "description": "Automates running stored prompts sequentially on Perplexity.ai for enhanced workflow efficiency.",
   
   "permissions": [
@@ -56,7 +56,7 @@
   ],
   
   "author": "Developer",
-  "homepage_url": "https://github.com/developer/perplexity-ai-automator",
+  "homepage_url": "https://github.com/HurseyB/PPI-Automation",
   
   "applications": {
     "gecko": {
