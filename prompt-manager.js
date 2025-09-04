@@ -148,10 +148,11 @@ class PromptManager {
         if (!text) return;
 
         const prompt = {
-            id: Date.now(),
-            text: text,
-            created: new Date().toISOString(),
-            modified: new Date().toISOString()
+          id: Date.now(),
+          text: text,
+          created: new Date().toISOString(),
+          modified: new Date().toISOString(),
+          pauseAfter: false
         };
 
         this.prompts.push(prompt);
@@ -520,7 +521,7 @@ class PromptManager {
     async savePrompts() {
         try {
             // Convert prompts to the format expected by the popup
-            const promptsForStorage = this.prompts.map(p => p.text);
+            const promptsForStorage = this.prompts;
             await browser.storage.local.set({ prompts: promptsForStorage });
         } catch (error) {
             console.error('Failed to save prompts:', error);
@@ -532,13 +533,13 @@ class PromptManager {
         try {
             const result = await browser.storage.local.get(['prompts']);
             const storedPrompts = result.prompts || [];
-
-            // Convert stored prompts to our format
-            this.prompts = storedPrompts.map((text, index) => ({
-                id: Date.now() + index,
-                text: text,
-                created: new Date().toISOString(),
-                modified: new Date().toISOString()
+            // Load stored prompts (with pauseAfter) or initialize defaults
+            this.prompts = storedPrompts.map((p, index) => ({
+              id: p.id || Date.now() + index,
+              text: p.text,
+              created: p.created || new Date().toISOString(),
+              modified: p.modified || new Date().toISOString(),
+              pauseAfter: p.pauseAfter || false
             }));
 
             this.renderPrompts();
@@ -571,6 +572,17 @@ class PromptManager {
         // Create container
         const item = document.createElement('div');
         item.className = 'prompt-item';
+        item.innerHTML = `
+          <div class="prompt-header">
+            <span class="prompt-number">${index + 1}</span>
+            <p class="prompt-preview">${prompt.text}</p>
+            <label class="pause-after-label">
+              <input type="checkbox" class="pause-after-checkbox" ${prompt.pauseAfter ? 'checked' : ''}>
+              Pause After
+            </label>
+            <div class="prompt-actions">…</div>
+          </div>
+        `;
 
         // Header: drag-handle, number, preview
         const header = document.createElement('div');
@@ -609,8 +621,13 @@ class PromptManager {
 
         // 7. Append to list
         this.promptsList.appendChild(item);
-        const checkbox = item.querySelector('.prompt-checkbox');
-        checkbox.addEventListener('change', () => this.togglePromptSelection(index));
+        // Bind pause-after toggle
+        const checkbox = item.querySelector('.pause-after-checkbox');
+        checkbox.addEventListener('change', () => {
+          this.prompts[index].pauseAfter = checkbox.checked;
+          this.prompts[index].modified = new Date().toISOString();
+          this.savePrompts();
+        });
       });
     }
 

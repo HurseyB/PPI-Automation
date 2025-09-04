@@ -292,7 +292,7 @@ class AutomationManager {
       }
   }
 
-  async startAutomation(prompts, tabId, companyName = '') {
+  async startAutomation(prompts /* array of { text, pauseAfter } */, tabId, companyName = '') {
       // Check if this specific tab is already running
       if (this.tabAutomations.has(tabId) && this.tabAutomations.get(tabId).isRunning) {
           throw new Error(`Automation is already running on tab ${tabId}`);
@@ -315,7 +315,7 @@ class AutomationManager {
       const tabState = {
           isRunning: true,
           isPaused: false,
-          prompts: [...prompts],
+          prompts: prompts.map(p => ({ text: p.text, pauseAfter: !!p.pauseAfter })),
           currentPromptIndex: 0,
           automationId: Date.now(),
           processedResults: [],
@@ -420,6 +420,7 @@ class AutomationManager {
   }
 
   async pauseAutomation(tabId) {
+    // state.currentPromptIndex points to next prompt
     const tabState = this.getTabState(tabId);
     if (!tabState || !tabState.isRunning) {
       throw new Error(`Automation is not running on tab ${tabId}`);
@@ -454,7 +455,7 @@ class AutomationManager {
       tabId: tabId
     });
 
-    // Continue processing from current prompt if not already processing
+    // Continue processing next prompt (index was already advanced)
     if (!tabState.isProcessingPrompt) {
       await this.processNextPrompt(tabId);
     }
@@ -495,15 +496,15 @@ class AutomationManager {
     const currentPrompt = tabState.prompts[tabState.currentPromptIndex];
     const promptNumber = tabState.currentPromptIndex + 1;
     
-    this.log(`Processing prompt ${promptNumber}/${tabState.prompts.length}: ${currentPrompt.substring(0, 50)}...`);
+    this.log(`Processing prompt ${promptNumber}/${tabState.prompts.length}: ${currentPrompt.text.substring(0, 50)}...`);
     this.updateTabState(tabId, { isProcessingPrompt: true });
 
     // Update progress - show current processing prompt number
     await this.sendMessageToPopup('automation-progress', {
-      current: promptNumber,
-      total: tabState.prompts.length,
-      prompt: currentPrompt,
-      status: 'processing'
+       current: promptNumber,
+       total: tabState.prompts.length,
+       prompt: currentPrompt.text,
+       status: 'processing'
     });
 
     try {
@@ -513,15 +514,15 @@ class AutomationManager {
         throw new Error('Tab is no longer valid or not on Perplexity.ai');
       }
 
-      // Send prompt to content script with increased timeouts
-      await browser.tabs.sendMessage(tabId, {
-        type: 'execute-prompt',
-        prompt: currentPrompt,
-        index: tabState.currentPromptIndex,
-        timeout: this.settings.timeout,
-        responseTimeout: this.settings.responseTimeout,
-        automationId: tabState.automationId
-      });
+    // Send prompt to content script with increased timeouts
+    await browser.tabs.sendMessage(tabId, {
+      type: 'execute-prompt',
+      prompt: currentPrompt.text,
+      index: tabState.currentPromptIndex,
+      timeout: this.settings.timeout,
+      responseTimeout: this.settings.responseTimeout,
+      automationId: tabState.automationId
+    });
 
       // Set tab-specific timeout for prompt execution
       this.setTabTimeout(tabId, () => {
@@ -583,35 +584,41 @@ class AutomationManager {
 
     // Update progress with completion count
     await this.sendMessageToPopup('automation-progress', {
-      current: tabState.processedResults.length,
-	  total: tabState.prompts.length,
-	  prompt: tabState.prompts[idx],
-      status: 'completed',
-      response: result.response,
-      hasResponse: !!(result.response && result.response.length > 0)
+         current: tabState.processedResults.length,
+         total: tabState.prompts.length,
+         prompt: tabState.prompts[idx].text,
+         status: 'completed',
+         response: result.response,
+         hasResponse: !!result.response
     });
 
-    // NEW: Add response to background document manager
+    // NEW: Add response to background document manager BEFORE pauseAfter check
     if (result.response && result.response.length > 0) {
-        const documentManager = this.getTabDocumentManager(tabId);
-        documentManager.addResponse(idx, tabState.prompts[idx], result.response);
-
-
-        // Notify popup about document update (if popup is open)
-        const docMgr = this.getTabDocumentManager(tabId);
-        await this.sendMessageToPopup('document-updated', {
-            responseCount: docMgr.getResponseCount(),
-            status: 'collecting',
-            message: 'Collecting responses...'
-        });
+      const documentManager = this.getTabDocumentManager(tabId);
+      documentManager.addResponse(idx, tabState.prompts[idx], result.response);
+      // Notify popup about document update (if popup is open)
+      const docMgr = this.getTabDocumentManager(tabId);
+      await this.sendMessageToPopup('document-updated', {
+        responseCount: docMgr.getResponseCount(),
+        status: 'collecting',
+        message: 'Collecting responses...'
+      });
     }
 
-    // Advance only if this matches
-    if (idx === tabState.currentPromptIndex) {
-        this.updateTabState(tabId, { currentPromptIndex: tabState.currentPromptIndex + 1 });
-    }
+
+    // Advance index
+    this.updateTabState(tabId, {
+      currentPromptIndex: tabState.currentPromptIndex + 1
+    });
     tabState.retryAttempts.delete(idx);
     await this.saveAutomationState();
+
+    // **Auto-pause after submission if flagged**
+    if (tabState.prompts[idx].pauseAfter) {
+      this.log(`Pausing after prompt ${idx + 1} as requested`);
+      await this.pauseAutomation(tabId);
+      return;  // stop before processing next
+    }
 
     // Wait before next prompt or complete
     if (tabState.currentPromptIndex < tabState.prompts.length) {

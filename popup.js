@@ -765,11 +765,15 @@ class PerplexityAutomator {
               await this.updateTabTitle(companyName);
 
             }
-            const promptsToSend = this.prompts.map(text => {
-                if (!companyName) return text;
-                return text
-                    //.replace(/\[Company\]/g, companyName)
-                    .replace(/\[Company Name\]/g, companyName);
+            const promptsToSend = this.prompts.map(prompt => {
+              // prompt is now an object with { text, pauseAfter }
+              let txt = prompt.text;
+              if (companyName) {
+                // replace company placeholder if desired
+                // txt = txt.replace(/\[Company\]/g, companyName);
+                txt = txt.replace(/\[Company Name\]/g, companyName);
+              }
+              return { text: txt, pauseAfter: !!prompt.pauseAfter };
             });
 
             await browser.runtime.sendMessage({
