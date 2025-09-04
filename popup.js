@@ -1111,7 +1111,12 @@ class DocumentManager {
      */
     generateHTMLDocument() {
         const title = this.document.title;
-        const timestamp = new Date().toLocaleString();
+        // Explicitly build "dd Month yyyy" to ensure correct order
+        const now = new Date();
+        const day = String(now.getDate()).padStart(2, '0');
+        const month = now.toLocaleString(undefined, { month: 'long' });
+        const year = now.getFullYear();
+        const timestamp = `${day} ${month} ${year}`;
 
         let html = `
         <!DOCTYPE html>
@@ -1160,7 +1165,9 @@ class DocumentManager {
             </style>
         </head>
         <body>
-            <br style="font-size: 12pt;"></br>
+            <br style="font-size: 20pt;"></br>
+            <br style="font-size: 20pt;"></br>
+            <br style="font-size: 20pt;"></br>
             <br style="font-size: 20pt;"></br>
             <br style="font-size: 20pt;"></br>
             <br style="font-size: 20pt;"></br>
@@ -1182,6 +1189,7 @@ class DocumentManager {
                 // Process the response text for HTML formatting
                 const processedResponse = this.processResponseText(response.responseText);
                 html += `<div class="response-content">${processedResponse}</div>`;
+                html += `<br clear="all" style="page-break-before: always"`;
             });
 
         html += `</body></html>`;
