@@ -1121,15 +1121,20 @@ class DocumentManager {
             <title>${title}</title>
             <style>
                 body {
-                    font-family: 'Aptos Display', 'Calibri', sans-serif;
-                    font-size: 11pt;
+                    font-family: 'Times New Roman', serif;
+                    font-size: 12pt;
                     line-height: 1.5;
                     color: #000000;
                 }
                 .response-content {
+                    font-family: 'Times New Roman', serif;
                     margin-bottom: 12pt;
+                    line-height: 1.5;
                 }
-                p { margin-bottom: 6pt; }
+                p { font-family: 'Times New Roman', serif; font-size: 12pt; margin-bottom: 6pt; }
+                h1 { font-style: normal; font-weight: normal;  font-family: 'Aptos Display', serif; color: #0F4761; font-size: 20pt; margin-bottom: 6pt; }
+                h2 { font-style: normal; font-weight: normal; font-family: 'Aptos Display', serif; color: #0F4761; font-size: 16pt; margin-bottom: 6pt; }
+                h3 { font-style: normal; font-weight: normal; font-family: 'Times New Roman', serif; color: #0F4761; font-size: 14pt; margin-bottom: 6pt; }
                 ul, ol { margin-bottom: 12pt; }
                 li { margin-bottom: 3pt; }
                 strong, b { font-weight: bold; }
@@ -1160,8 +1165,8 @@ class DocumentManager {
             <br style="font-size: 20pt;"></br>
             <br style="font-size: 20pt;"></br>
             <br style="font-size: 20pt;"></br>
-            <h1 style="font-size: 20pt;height: 100vh;display: flex;flex-direction: column;justify-content: center;text-align: left; margin: 0;padding: 0;">${title}</h1>
-            <p style="font-size: 12pt;text-align: left; font-style: italic; margin-bottom: 24pt;">${timestamp}</p>
+            <h1 style="color: #000000;font-family: 'Aptos';font-size: 20pt;height: 100vh;display: flex;flex-direction: column;justify-content: center;text-align: left; margin: 0;padding: 0;">${title}</h1>
+            <p style="font-family: 'Aptos';font-size: 12pt;text-align: left; margin-bottom: 24pt;">${timestamp}</p>
         `;
 
         html += `
@@ -1288,7 +1293,7 @@ class DocumentManager {
                     children: [
                         new TextRun({
                             text: this.document.title,
-                            font: "Aptos Display",
+                            font: "Aptos",
                             size: 40, // 20pt = 40 half-points
                             bold: true
                         })
@@ -1306,7 +1311,7 @@ class DocumentManager {
                         children: [
                             new TextRun({
                                 text: `Generated: ${new Date(this.document.timestamp).toLocaleString()}`,
-                                font: "Aptos Display",
+                                font: "Aptos",
                                 size: 24, // 12pt
                                 italics: true
                             })
@@ -1407,8 +1412,8 @@ class DocumentManager {
                                 children: [
                                     new TextRun({
                                         text: line.trim(),
-                                        font: "Aptos Display",
-                                        size: 22 // 11pt for body text
+                                        font: "Times New Roman",
+                                        size: 24 // 12pt for body text
                                     })
                                 ],
                                 spacing: { after: 200 }

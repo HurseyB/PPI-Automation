@@ -573,15 +573,7 @@ class PromptManager {
         const item = document.createElement('div');
         item.className = 'prompt-item';
         item.innerHTML = `
-          <div class="prompt-header">
-            <span class="prompt-number">${index + 1}</span>
-            <p class="prompt-preview">${prompt.text}</p>
-            <label class="pause-after-label">
-              <input type="checkbox" class="pause-after-checkbox" ${prompt.pauseAfter ? 'checked' : ''}>
-              Pause After
-            </label>
-            <div class="prompt-actions">…</div>
-          </div>
+
         `;
 
         // Header: drag-handle, number, preview
@@ -596,6 +588,10 @@ class PromptManager {
           <div class="prompt-actions">
             <button class="btn btn-text btn-edit" title="Edit prompt">✏️</button>
             <button class="btn btn-text btn-delete" title="Delete prompt">🗑️</button>
+            <label class="setting-label">
+              <input type="checkbox" class="pause-after-checkbox" data-index="${index}" ${prompt.pauseAfter ? 'checked' : ''}>
+              <span>Pause After</span>
+            </label>
           </div>`;
         item.appendChild(header);
 
