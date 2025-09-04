@@ -5,6 +5,171 @@
  * Restored full element-finding and insertion from content-working.js
  */
 
+class AdaptiveSelectorManager {
+  constructor(strategies) {
+    this.strategies = strategies;
+  }
+
+  async findElement(type, timeout = 10000) {
+    const sels = this.strategies[type] || [];
+    const end = Date.now() + timeout;
+
+    while (Date.now() < end) {
+      // First try predefined strategies
+      for (const sel of sels) {
+        let el;
+        try {
+          // Support jQuery-style :contains for text fallback
+          if (sel.includes(':contains')) {
+            const text = sel.match(/:contains\("(.+)"\)/)[1];
+            el = Array.from(document.querySelectorAll(sel.split(':contains')[0]))
+              .find(el => el.textContent.includes(text));
+          } else {
+            el = document.querySelector(sel);
+          }
+        } catch (e) {
+          continue;
+        }
+        if (el && this.isVisible(el) && this.isUsableElement(el, type)) {
+            return el;
+          }
+               }
+
+        // If predefined strategies fail, try dynamic discovery
+        const dynamicElement = await this.dynamicElementDiscovery(type);
+        if (dynamicElement) {
+          return dynamicElement;
+        }
+
+      await new Promise(r => setTimeout(r, 200));
+    }
+    return null;
+  }
+
+  async dynamicElementDiscovery(type) {
+    switch (type) {
+      case 'input':
+        return this.findLargestInputElement();
+      case 'submitButton':
+        return this.findMostLikelySubmitButton();
+      case 'responseContainer':
+        return this.findLatestResponseContainer();
+      default:
+        return null;
+    }
+  }
+
+  findLargestInputElement() {
+    const inputs = Array.from(document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"], [role="textbox"]'));
+    return inputs
+      .filter(el => this.isVisible(el) && !el.disabled && !el.readOnly)
+      .sort((a, b) => {
+        const aSize = a.getBoundingClientRect().width * a.getBoundingClientRect().height;
+        const bSize = b.getBoundingClientRect().width * b.getBoundingClientRect().height;
+        return bSize - aSize;
+      })[0] || null;
+  }
+
+  findMostLikelySubmitButton() {
+    // Enhanced button detection with scoring system
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
+    const scoredButtons = buttons
+      .filter(el => this.isVisible(el) && !el.disabled)
+      .map(button => ({
+        element: button,
+        score: this.calculateSubmitButtonScore(button)
+      }))
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    return scoredButtons.length > 0 ? scoredButtons[0].element : null;
+  }
+
+  calculateSubmitButtonScore(button) {
+    let score = 0;
+    const text = (button.textContent || '').toLowerCase().trim();
+    const ariaLabel = (button.getAttribute('aria-label') || '').toLowerCase();
+    const title = (button.title || '').toLowerCase();
+    const className = (button.className || '').toLowerCase();
+    const id = (button.id || '').toLowerCase();
+
+    // High-value indicators
+    const submitKeywords = ['send', 'submit', 'search', 'ask', 'go', 'enter'];
+    const submitRegex = /\b(send|submit|search|ask|go|enter)\b/;
+
+    // Text content scoring
+    if (submitRegex.test(text)) score += 50;
+    if (submitKeywords.some(keyword => text.includes(keyword))) score += 30;
+
+    // Aria-label scoring (important for accessibility)
+    if (submitRegex.test(ariaLabel)) score += 40;
+    if (submitKeywords.some(keyword => ariaLabel.includes(keyword))) score += 25;
+
+    // Title scoring
+    if (submitRegex.test(title)) score += 30;
+    if (submitKeywords.some(keyword => title.includes(keyword))) score += 20;
+
+    // Class and ID scoring
+    if (submitKeywords.some(keyword => className.includes(keyword))) score += 15;
+    if (submitKeywords.some(keyword => id.includes(keyword))) score += 15;
+
+    // Type and form context
+    if (button.type === 'submit') score += 40;
+    if (button.closest('form')) score += 20;
+
+    // Visual indicators
+    if (button.querySelector('svg')) score += 25; // Has icon
+
+    // Position-based scoring (buttons on the right are often submit)
+    const rect = button.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    if (rect.right > viewportWidth * 0.7) score += 10; // Right side of screen
+
+    // Size-based scoring (very small buttons are unlikely to be submit)
+    const area = rect.width * rect.height;
+    if (area < 100) score -= 20; // Too small
+    if (area > 500) score += 10; // Good size
+
+    return score;
+  }
+
+  findLatestResponseContainer() {
+    // Find containers that likely contain AI responses
+    const potentialContainers = Array.from(document.querySelectorAll([
+      '[data-message-author="ai"]',
+      '[data-author="ai"]',
+      '.conversation-thread [data-author]',
+      '.markdown',
+      '.prose',
+      '[class*="message" i]',
+      '[class*="response" i]',
+      '[class*="answer" i]',
+      'main div[class*="conversation" i]'
+    ].join(',')));
+
+    // Return the last visible container that contains substantial text
+    return potentialContainers
+      .filter(el => this.isVisible(el) && el.textContent.trim().length > 50)
+      .pop() || null;
+  }
+
+     isVisible(el) {
+       const rect = el.getBoundingClientRect();
+       return rect.width > 0 && rect.height > 0;
+     }
+
+  isUsableElement(el, type) {
+    switch (type) {
+      case 'input':
+        return !el.disabled && !el.readOnly;
+      case 'submitButton':
+        return !el.disabled && el.offsetParent !== null;
+      default:
+        return true;
+    }
+  }
+}
+
 class PerplexityAutomator {
   constructor() {
     if (window.__perplexityAutomatorInitialized) return;
@@ -23,51 +188,59 @@ class PerplexityAutomator {
     // NEW: Overlay management
     this.overlay = null;
     this.overlayVisible = true; // Track if user has closed overlay
-    this.currentStatus = null; // Track current status to detect changes
-
-    this.selectors = {
-      textareas: [
+    // NEW: Initialize adaptive selector manager for robust element discovery
+    this.adaptiveSelector = new AdaptiveSelectorManager({
+      input: [
+        // Primary strategies for input elements
         'textarea',
-        'textarea[placeholder*="Ask"]',
-        'textarea[placeholder*="follow"]',
-        'textarea[data-testid*="search"]',
-        'textarea[aria-label*="search"]',
-        '[data-testid="searchbox"] textarea',
+        'textarea[placeholder*="Ask" i]',
+        'textarea[placeholder*="search" i]',
+        'textarea[placeholder*="question" i]',
+        '[role="textbox"]',
+        'input[type="text"]',
+        'input[placeholder*="Ask" i]',
+        'input[placeholder*="search" i]',
+        '[contenteditable="true"]',
+        '[data-testid*="search" i]',
+        '[data-testid*="input" i]',
+        '.search-box input',
         '.search-box textarea',
         '#search-input'
       ],
-      contentEditable: [
-        '[contenteditable="true"]',
-        '[contenteditable] textarea',
-        'div[contenteditable="true"]',
-        '[role="textbox"]'
-      ],
-      textInputs: [
-        'input[type="text"]',
-        'input[placeholder*="Ask"]',
-        'input[placeholder*="search"]'
-      ],
-      submitButtons: [
+      submitButton: [
+        // Enhanced strategies for submit buttons
         'button[type="submit"]',
-        'button[aria-label*="submit"]',
-        'button[aria-label*="Send"]',
-        'button[data-testid*="submit"]',
-        'button[data-testid*="send"]',
-        '[data-testid="search-submit-button"]',
+        'button[aria-label*="send" i]',
+        'button[aria-label*="submit" i]',
+        'button[aria-label*="search" i]',
+        'button[title*="send" i]',
+        'button[title*="submit" i]',
+        'button:contains("Send")',
+        'button:contains("Submit")',
+        'button:contains("Search")',
+        'button:contains("Ask")',
+        'button:contains("Go")',
+        '[role="button"][aria-label*="send" i]',
+        '[role="button"] svg[data-icon]',
+        'form button:last-child',
         '.submit-button',
-        'button[title*="Send"]',
-        'button svg[data-icon="arrow-right"]',
-        'button:has(svg)',
-        'form button:last-child'
+        '[data-testid*="submit" i]',
+        '[data-testid*="send" i]'
       ],
-      responseContainers: [
-        'main .conversation-thread [data-message-author="ai"]',
-        'main .markdown, .markdown-body, .prose, .conversation-message[data-author="ai"]',
-        'div[data-message-author="ai"]',
-        'div[data-author="ai"]',
-        'main div[class*="Message"], main div[class*="message"], div[data-testid="ai-response"]'
+      responseContainer: [
+        // Enhanced strategies for AI response containers
+        '[data-message-author="ai"]',
+        '[data-author="ai"]',
+        '.conversation-thread [data-author="ai"]',
+        '.conversation-message[data-author="ai"]',
+        'main .markdown',
+        '.markdown-body',
+        '.prose',
+        'main div[class*="Message" i]',
+        'main div[class*="message" i]',
+        'div[data-testid*="ai-response" i]'
       ]
-    };
+    });
 
     this.initializeOverlayStyles();
     this.setupMessageListener();
@@ -312,27 +485,13 @@ class PerplexityAutomator {
   }
 
   async waitForInputElement(timeout = this.waitTimeout) {
-    const end = Date.now() + timeout;
-    while (Date.now() < end) {
-      for (let sel of this.selectors.textareas.concat(this.selectors.contentEditable, this.selectors.textInputs)) {
-        const el = document.querySelector(sel);
-        if (el && this.isVisible(el)) return el;
-      }
-      await this.sleep(200);
-    }
-    return null;
+    // Use adaptive selector for robust discovery
+    return await this.adaptiveSelector.findElement('input', timeout);
   }
 
   async waitForSubmitButton(timeout = this.waitTimeout) {
-    const end = Date.now() + timeout;
-    while (Date.now() < end) {
-      for (let sel of this.selectors.submitButtons) {
-        const el = document.querySelector(sel);
-        if (el && this.isVisible(el) && this.isLikelySubmitButton(el)) return el;
-      }
-      await this.sleep(200);
-    }
-    return null;
+    // Use adaptive selector for robust discovery
+    return await this.adaptiveSelector.findElement('submitButton', timeout);
   }
 
   isVisible(el) {
@@ -370,11 +529,11 @@ class PerplexityAutomator {
 
   async waitForResponseText(timeout) {
     const start = Date.now();
-    const initial = new Set(document.querySelectorAll(this.selectors.responseContainers.join(',')));
+    const initial = new Set(document.querySelectorAll(this.adaptiveSelector.strategies.responseContainer.join(',')));
     return new Promise(resolve => {
       let stable = 0, lastLen = 0;
       const check = () => {
-        const nodes = Array.from(document.querySelectorAll(this.selectors.responseContainers.join(',')));
+        const nodes = Array.from(document.querySelectorAll(this.adaptiveSelector.strategies.responseContainer.join(',')));
         const node = nodes.reverse().find(n => !initial.has(n) && this.isVisible(n));
         if (node) {
           // CHANGED: Extract HTML content instead of plain text
