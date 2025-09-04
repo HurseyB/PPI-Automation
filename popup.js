@@ -591,7 +591,7 @@ class PerplexityAutomator {
             const promptsToSend = this.prompts.map(text => {
                 if (!companyName) return text;
                 return text
-                    .replace(/\[Company\]/g, companyName)
+                    //.replace(/\[Company\]/g, companyName)
                     .replace(/\[Company Name\]/g, companyName);
             });
 

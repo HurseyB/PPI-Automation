@@ -318,7 +318,11 @@ html, body {
 }
 
 .prompt-preview {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     margin: 0 var(--space-12);
     font-size: var(--font-size-base);
     color: var(--color-text);
@@ -337,7 +341,7 @@ html, body {
 .prompt-actions {
     display: flex;
     gap: var(--space-8);
-    flex-shrink: 0;
+    flex: 0 0 auto;
 }
 
 .prompt-content {
@@ -709,3 +713,26 @@ html, body {
     padding: var(--space-8);
   }
 }
+
+/* === Preserve Action Buttons on Long Prompts === */
+.prompts-list .prompt-item .prompt-header {
+  display: flex;
+  align-items: center;
+  position: relative;         /* allow absolute children if needed */
+  min-width: 0;               /* allow its children to shrink */
+}
+
+.prompts-list .prompt-item .prompt-header .prompt-preview {
+  flex: 1 1 auto !important;  /* ensure it’s the primary flex item */
+  min-width: 0 !important;     /* critical for overflowing flex items */
+  overflow: hidden !important; /* hide any overflow */
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.prompts-list .prompt-item .prompt-header .prompt-actions {
+  display: flex !important;
+  flex: 0 0 auto !important;  /* never shrink or grow */
+  margin-left: auto;          /* push buttons to the right */
+}
+
