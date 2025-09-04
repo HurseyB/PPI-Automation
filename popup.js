@@ -249,6 +249,22 @@ class PerplexityAutomator {
       if (this.enableNotifications) {
         this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
       }
+
+      // Persist company name on change
+      if (this.companyNameInput) {
+        this.companyNameInput.addEventListener('input', () => {
+          // Save only the companyName in UI state
+          this.saveUIState({
+            // Minimal state object; other fields will be merged internally
+            current: this.current || 0,
+            total: this.total || 0,
+            percentage: this.percentage || 0,
+            currentPromptText: this.currentPromptText || '',
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus ? this.documentStatus.textContent : 'Ready'
+          });
+        });
+      }
     }
 
     setupMessageListener() {
