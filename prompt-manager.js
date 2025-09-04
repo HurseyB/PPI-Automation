@@ -9,6 +9,7 @@ class PromptManager {
         this.selectedPrompts = new Set();
         this.draggedItem = null;
         this.dragOverItem = null;
+        this.isRunning = false;
 
         this.initializeElements();
         this.bindEventListeners();
@@ -736,36 +737,37 @@ class PromptManager {
 
     // Progress log management methods
     setupMessageListener() {
-      browser.runtime.onMessage.addListener((message) => {
-        try {
-          switch (message.type) {
-            case 'automation-started':
-              this.handleAutomationStarted(message.data);
-              break;
-            case 'automation-progress':
-              this.handleProgressUpdate(message.data);
-              break;
-            case 'automation-complete':
-              this.handleAutomationComplete(message.data);
-              break;
-            case 'automation-stopped':
-              this.handleAutomationStopped(message.data);
-              break;
-            case 'automation-error':
-              this.handleAutomationError(message.data);
-              break;
-            case 'automation-paused':
-              this.handleAutomationPaused(message.data);
-              break;
-            case 'automation-resumed':
-              this.handleAutomationResumed(message.data);
-              break;
-          }
-        } catch (error) {
-          console.error('Error handling message in prompt manager:', error);
-        }
-      });
+        browser.runtime.onMessage.addListener((message) => {
+            try {
+                switch (message.type) {
+                    case 'automation-started':
+                        this.handleAutomationStarted(message.data);
+                        break;
+                    case 'automation-progress':
+                        this.handleProgressUpdate(message.data);
+                        break;
+                    case 'automation-complete':
+                        this.handleAutomationComplete(message.data);
+                        break;
+                    case 'automation-stopped':
+                        this.handleAutomationStopped(message.data);
+                        break;
+                    case 'automation-error':
+                        this.handleAutomationError(message.data);
+                        break;
+                    case 'automation-paused':
+                        this.handleAutomationPaused(message.data);
+                        break;
+                    case 'automation-resumed':
+                        this.handleAutomationResumed(message.data);
+                        break;
+                }
+            } catch (error) {
+                console.error('Error handling message in prompt manager:', error);
+            }
+        });
     }
+
 
     handleAutomationStarted(data) {
       this.showProgressSection();
@@ -852,10 +854,12 @@ class PromptManager {
     }
 
     clearLog() {
-      if (confirm('Are you sure you want to clear the automation log?')) {
-        this.automationLog.innerHTML = '<p class="log-empty">No automation activity yet. Start an automation to see logs here.</p>';
-      }
+        if (this.automationLog) {
+            this.automationLog.innerHTML = '<div class="log-empty">No automation activity yet. Start an automation to see logs here.</div>';
+        }
+        console.log('Automation log cleared');
     }
+
 
     hideEditModal() {
       this.editModal.classList.add('hidden');
@@ -871,6 +875,123 @@ class PromptManager {
       this.renderPrompts();
       this.hideEditModal();
       this.showNotification('Prompt updated successfully', 'success');
+    }
+
+    // Automation message handlers
+    handleAutomationStarted(data) {
+        this.isRunning = true;
+        this.showProgressSection();
+        this.logMessage(`🚀 Automation started with ${data.total} prompts`);
+
+        // Update progress UI
+        if (this.progressText) {
+            this.progressText.textContent = `0 of ${data.total} completed`;
+        }
+        if (this.progressFill) {
+            this.progressFill.style.width = '0%';
+        }
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = 'Starting automation...';
+        }
+    }
+
+    handleProgressUpdate(data) {
+        const current = data.current;
+        const total = data.total;
+        const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+
+        // Update progress bar
+        if (this.progressText) {
+            this.progressText.textContent = `${current} of ${total} completed`;
+        }
+        if (this.progressFill) {
+            this.progressFill.style.width = `${percentage}%`;
+        }
+
+        // Handle different status types
+        if (data.status === 'processing' && data.prompt) {
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Processing: ${data.prompt.substring(0, 50)}...`;
+            }
+            this.logMessage(`📝 Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
+        } else if (data.status === 'completed') {
+            this.logMessage(`✅ Prompt ${current} completed successfully`);
+        } else if (data.status === 'failed') {
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
+            }
+            this.logMessage(`❌ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
+        } else if (data.status === 'retrying') {
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
+            }
+            this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
+        }
+    }
+
+    handleAutomationComplete(data) {
+        this.isRunning = false;
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = `✨ Automation completed! ${data.completed}/${data.total} prompts processed`;
+        }
+        this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
+
+        if (data.summary) {
+            this.logMessage(`📊 Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
+        }
+    }
+
+    handleAutomationStopped(data) {
+        this.isRunning = false;
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = '⏹️ Automation stopped';
+        }
+        this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
+    }
+
+    handleAutomationError(data) {
+        this.isRunning = false;
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = '❌ Automation error occurred';
+        }
+        this.logMessage(`💥 Error: ${data.error || 'Unknown error occurred'}`);
+    }
+
+    handleAutomationPaused(data) {
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = '⏸️ Automation paused';
+        }
+        this.logMessage(`⏸️ Automation paused at prompt ${data.currentIndex + 1}/${data.total}`);
+    }
+
+    handleAutomationResumed(data) {
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = `▶️ Resuming automation...`;
+        }
+        this.logMessage(`▶️ Automation resumed from prompt ${data.currentIndex + 1}/${data.total}`);
+    }
+
+    // Helper methods for automation log
+    showProgressSection() {
+        // Make sure progress section is visible
+        if (this.progressCurrent) {
+            this.progressCurrent.style.display = 'block';
+        }
+    }
+
+    logMessage(message) {
+        if (!this.automationLog) return;
+
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = document.createElement('div');
+        logEntry.className = 'log-entry';
+        logEntry.innerHTML = `<span class="log-timestamp">${timestamp}</span>${message}`;
+
+        this.automationLog.appendChild(logEntry);
+        this.automationLog.scrollTop = this.automationLog.scrollHeight;
+
+        // Also log to console for debugging
+        console.log(`[Automation] ${message}`);
     }
 
 
