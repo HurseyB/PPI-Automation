@@ -523,51 +523,12 @@ class DocumentManager {
         return content;
     }
 
-    async downloadTxt() {
-        try {
-
-            const content = this.generateTextDocument();
-            const dataUrl = 'data:text/plain;charset=utf-8,' + encodeURIComponent(content);
-            
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-            const filename = `perplexity-automation-${timestamp}.txt`;
-
-            await browser.downloads.download({
-              url: dataUrl,
-              filename: filename,
-              saveAs: true
-            });
-
-            console.log('Text document downloaded:', filename);
-        } catch (error) {
-            console.error('Failed to download text document:', error);
-            throw error;
-        }
+    downloadTxt() {
+      browser.runtime.sendMessage({ type: 'export-results', format: 'txt' });
     }
 
-    async downloadDocx() {
-        // For now, create an enhanced text format that's docx-compatible
-        // This could be enhanced with proper DOCX generation in the future
-        try {
-
-            const content = this.generateRichTextDocument();
-            const dataUrl = 'data:application/rtf;charset=utf-8,' + encodeURIComponent(rtf);
-            
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-            const filename = `perplexity-automation-${timestamp}.docx`;
-
-            await browser.downloads.download({
-              url: dataUrl,
-              filename: filename,
-              saveAs: true
-            });
-
-            console.log('DOCX document downloaded:', filename);
-        } catch (error) {
-            console.error('Failed to download DOCX document:', error);
-            // Fallback to text format
-            await this.downloadTxt();
-        }
+    downloadDocx() {
+      browser.runtime.sendMessage({ type: 'export-results', format: 'docx' });
     }
 
     generateRichTextDocument() {
