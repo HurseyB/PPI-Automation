@@ -264,18 +264,19 @@ class PerplexityAutomator {
 
       // Document management events
       this.downloadDocxBtn.addEventListener('click', async () => {
-          // 1. Capture and store the company name before downloading
-          const raw = this.companyNameInput ? this.companyNameInput.value.trim() : '';
-          // Save per-tab company name
-          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-          await browser.runtime.sendMessage({
+        // Capture the user-entered company name
+        const name = this.companyNameInput ? this.companyNameInput.value.trim() : 'Company';
+        // Persist per-tab company name in background
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        await browser.runtime.sendMessage({
             type: 'set-tab-company-name',
             tabId: tab.id,
-            companyName: raw || 'Company'
-          });
-          this.documentManager.companyName = raw || 'Company';
-          this.documentManager.downloadDocx();
-
+            companyName: name
+        });
+        // Store in this DocumentManager instance
+        this.documentManager.companyName = name || 'Company';
+        // Download using updated manager state
+        this.documentManager.downloadDocx();
       });
       this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
