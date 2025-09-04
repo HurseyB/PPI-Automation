@@ -193,7 +193,8 @@ html, body {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     background-color: var(--color-surface);
-    overflow: hidden;
+    overflow-y: auto;
+    max-height: 500px;
     min-height: 300px;
 }
 
