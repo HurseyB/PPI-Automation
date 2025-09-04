@@ -34,7 +34,13 @@ class PerplexityAutomator {
         this.bindEventListeners();
         this.loadPrompts();
     // ADDED: Load document manager state first
-        this.documentManager.loadDocumentState().then(() => {
+        // ENHANCED: Load document manager state with background sync
+        this.documentManager.loadDocumentState().then(async () => {
+            // Try to sync with background if no data locally
+            if (!this.documentManager.hasResponses()) {
+                await this.documentManager.syncWithBackground();
+            }
+
             this.updateResponseCount();
             if (this.documentManager.hasResponses()) {
                 this.enableDownloadButtons();
@@ -46,15 +52,37 @@ class PerplexityAutomator {
             }
         });
 
-        this.loadUIState().then(state => {
+
+        this.loadUIState().then(async state => {  // <- ADD 'async' HERE
             if (!state) return;
 
-            // Restore document data FIRST if it exists
+            // Restore document data FIRST if it exists, but prioritize background sync
             if (state.documentData && state.documentData.document) {
-                // Restore the entire document state
-                this.documentManager.document = state.documentData.document;
-                console.log('Document data restored:', this.documentManager.getResponseCount(), 'responses');
+                // First try to sync with background for latest data
+                const synced = await this.documentManager.syncWithBackground();
+                if (!synced) {
+                    // Fallback to UI state data if background sync fails
+                    // Check if we need to map the structure (in case UI state has background structure)
+                    if (state.documentData.document.responses.length > 0 &&
+                        state.documentData.document.responses[0].prompt !== undefined) {
+                        // UI state has background structure, need to map it
+                        this.documentManager.document = {
+                            ...state.documentData.document,
+                            responses: state.documentData.document.responses.map(bgResponse => ({
+                                promptNumber: bgResponse.index + 1,
+                                promptText: bgResponse.prompt,
+                                responseText: bgResponse.response,
+                                timestamp: bgResponse.timestamp
+                            }))
+                        };
+                    } else {
+                        // UI state already has correct structure
+                        this.documentManager.document = state.documentData.document;
+                    }
+                    console.log('Document data restored from UI state:', this.documentManager.getResponseCount(), 'responses');
+                }
             }
+
 
             // Show progress if there's ongoing automation
             // Show progress if there's ongoing automation
@@ -289,7 +317,7 @@ class PerplexityAutomator {
         } else if (data.status === 'completed') {
             this.currentPrompt.textContent = `Completed prompt ${current}/${total}`;
             this.logMessage(`✓ Prompt ${current} completed successfully`);
-            
+
             // NEW: Response collection handled by background script, just update UI
             if (data.response && data.prompt) {
                 this.updateResponseCount();
@@ -739,32 +767,51 @@ class PerplexityAutomator {
 class DocumentManager {
     async saveDocumentState() {
         try {
+            // Save to both popup storage and sync with background
             await browser.storage.local.set({
-                documentManagerState: this.document
+                documentData: this.document,
+                backgroundDocument: this.document  // Keep background in sync
             });
         } catch (error) {
             console.error('Failed to save document state:', error);
         }
     }
 
+
     async loadDocumentState() {
         try {
-            // Load from background script instead of local storage
-            const response = await browser.runtime.sendMessage({ type: 'get-document-data' });
-            if (response && response.document) {
-                this.document = response.document;
+            // FIRST: Try to load from background document manager
+            const backgroundResult = await browser.storage.local.get(['backgroundDocument']);
+            if (backgroundResult.backgroundDocument && backgroundResult.backgroundDocument.responses.length > 0) {
+                // Use background document as primary source, but map the structure
+                this.document = {
+                    ...backgroundResult.backgroundDocument,
+                    responses: backgroundResult.backgroundDocument.responses.map(bgResponse => ({
+                        promptNumber: bgResponse.index + 1, // Convert 0-based index to 1-based prompt number
+                        promptText: bgResponse.prompt,
+                        responseText: bgResponse.response,
+                        timestamp: bgResponse.timestamp
+                    }))
+                };
                 console.log('Document state loaded from background:', this.getResponseCount(), 'responses');
+
+                // Also save to popup storage for backup
+                await browser.storage.local.set({ documentData: this.document });
+                return;
+            }
+
+
+            // FALLBACK: Load from popup's own storage if no background document
+            const result = await browser.storage.local.get(['documentData']);
+            if (result.documentData) {
+                this.document = result.documentData;
+                console.log('Document state loaded from popup storage:', this.getResponseCount(), 'responses');
             }
         } catch (error) {
-            console.error('Failed to load document state from background:', error);
-            // Fallback to local storage for backward compatibility
-            const result = await browser.storage.local.get(['documentState']);
-            if (result.documentState) {
-                this.document = result.documentState;
-                console.log('Document state loaded from local storage fallback:', this.getResponseCount(), 'responses');
-            }
+            console.error('Failed to load document state:', error);
         }
     }
+
 
     async clearDocumentState() {
         try {
@@ -945,6 +992,37 @@ class DocumentManager {
     escapeRtf(text) {
         return text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}');
     }
+
+    // NEW METHOD: Sync with background document manager
+    async syncWithBackground() {
+        try {
+            // Get the latest from background
+            const response = await browser.runtime.sendMessage({ type: 'get-document-data' });
+            if (response && response.document && response.document.responses.length > 0) {
+                // Map background document structure to popup document structure
+                this.document = {
+                    ...response.document,
+                    responses: response.document.responses.map(bgResponse => ({
+                        promptNumber: bgResponse.index + 1, // Convert 0-based index to 1-based prompt number
+                        promptText: bgResponse.prompt,
+                        responseText: bgResponse.response,
+                        timestamp: bgResponse.timestamp
+                    }))
+                };
+                console.log('Synced with background document:', this.getResponseCount(), 'responses');
+
+                // Save locally as well
+                await browser.storage.local.set({ documentData: this.document });
+                return true;
+            }
+
+            return false;
+        } catch (error) {
+            console.error('Failed to sync with background:', error);
+            return false;
+        }
+    }
+
 
 }
 
