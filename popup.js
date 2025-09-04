@@ -56,17 +56,21 @@ class PerplexityAutomator {
     }
 
     setupMessageListener() {
-        // Listen for messages from background script
-        browser.runtime.onMessage.addListener((message) => {
-            if (message.type === 'automation-progress') {
-                this.updateProgress(message.data);
-            } else if (message.type === 'automation-complete') {
-                this.automationComplete();
-            } else if (message.type === 'automation-error') {
-                this.handleAutomationError(message.error);
-            }
+        browser.runtime.onMessage.addListener(message => {
+          switch (message.type) {
+            case 'automation-progress':
+              // Only update progress display; do NOT internally increment
+              this.setProgress(message.data.current, message.data.total, message.data);
+              break;
+            case 'automation-complete':
+              this.automationComplete();
+              break;
+            case 'automation-error':
+              this.handleAutomationError(message.error);
+              break;
+          }
         });
-    }
+      }
 
     async loadPrompts() {
         try {
@@ -269,18 +273,28 @@ class PerplexityAutomator {
         }
     }
 
-    updateProgress(data) {
-        const { current, total, prompt } = data;
-        
-        this.currentPromptIndex = current;
-        const percentage = Math.round((current / total) * 100);
-        
+    setProgress(current, total, data) {
+        // Show the progress section if hidden
+        if (this.progressSection.style.display === 'none') {
+          this.progressSection.style.display = 'block';
+        }
+        // Update text and bar based strictly on incoming values
         this.progressText.textContent = `${current} of ${total} completed`;
-        this.progressFill.style.width = `${percentage}%`;
-        this.currentPrompt.textContent = `Current: ${this.truncateText(prompt, 60)}`;
-        
-        this.logMessage(`Processing prompt ${current}/${total}: ${this.truncateText(prompt, 30)}`);
-    }
+        const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+        this.progressFill.style.width = `${pct}%`;
+
+        // Only show the “current-prompt” text when starting processing,
+        // not when finishing or retrying:
+        if (data.status === 'processing') {
+          this.currentPrompt.textContent = `Current: ${data.prompt}`;
+        }
+
+        // Log messages verbatim (keeps scrollbar at bottom)
+        this.automationLog.innerHTML += `[${new Date().toLocaleTimeString()}] ${data.status} ${current}/${total}` + '<br>';
+        this.automationLog.scrollTop = this.automationLog.scrollHeight;
+      }
+
+
 
     automationComplete() {
         this.isRunning = false;
