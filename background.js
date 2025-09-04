@@ -4,70 +4,90 @@
  */
 
 class AutomationManager {
-  constructor() {
-    this.isRunning = false;
-    this.isPaused = false;
-    this.currentTabId = null;
-    this.prompts = [];
-    this.currentPromptIndex = 0;
-    this.automationId = null;
-    this.processedResults = [];
-    this.currentTimeout = null;
-    this.retryAttempts = new Map();
-    this.isProcessingPrompt = false;
-    this.completedPrompts = new Set();
-    this.settings = {
-      delay: 5000, // Increased delay between prompts
-      maxRetries: 3,
-      timeout: 120000, // Increased to 2 minutes
-      retryDelay: 10000, // Increased retry delay
-      responseTimeout: 90000, // Increased response timeout
-      enableRetries: true,
-      pauseOnError: false
-    };
-    this.tabAutomations = new Map(); // tabId -> automation state
-    this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
-    this.tabCompanyNames = new Map(); // tabId -> company name
-    this.initializeBackground();
-  }
-
-  initializeBackground() {
-    this.setupMessageListeners();
-    this.setupTabListeners();
-    this.loadSettings();
-    this.log('Enhanced background script initialized');
-  }
-
-  setupMessageListeners() {
-    browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleMessage(message, sender, sendResponse);
-      return true;
-    });
-  }
-
-  setupTabListeners() {
-    browser.tabs.onActivated.addListener((activeInfo) => {
-      this.handleTabActivated(activeInfo);
-    });
-    browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-      this.handleTabUpdated(tabId, changeInfo, tab);
-    });
-    browser.tabs.onRemoved.addListener((tabId) => {
-      this.handleTabRemoved(tabId);
-    });
-  }
-
-  async loadSettings() {
-    try {
-      const result = await browser.storage.local.get(['settings']);
-      if (result.settings) {
-        this.settings = { ...this.settings, ...result.settings };
-      }
-      this.log('Settings loaded:', this.settings);
-    } catch (error) {
-      this.logError('Failed to load settings:', error);
+    constructor() {
+        this.isRunning = false;
+        this.isPaused = false;
+        this.currentTabId = null;
+        this.prompts = [];
+        this.currentPromptIndex = 0;
+        this.automationId = null;
+        this.processedResults = [];
+        this.currentTimeout = null;
+        this.retryAttempts = new Map();
+        this.isProcessingPrompt = false;
+        this.completedPrompts = new Set();
+        this.settings = {
+            delay: 5000, // Increased delay between prompts
+            maxRetries: 3,
+            timeout: 120000, // Increased to 2 minutes
+            retryDelay: 10000, // Increased retry delay
+            responseTimeout: 90000, // Increased response timeout
+            enableRetries: true,
+            pauseOnError: false
+        };
+        this.tabAutomations = new Map(); // tabId -> automation state
+        this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
+        this.tabCompanyNames = new Map(); // tabId -> company name
+        this.initializeBackground();
     }
-  }
+
+    getTabState(tabId) {
+        return this.tabAutomations.get(tabId) || null;
+    }
+
+    updateTabState(tabId, updates) {
+        const state = this.getTabState(tabId);
+        if (state) {
+            Object.assign(state, updates);
+        }
+    }
+
+    hasRunningAutomation(tabId = null) {
+        if (tabId) {
+            const state = this.getTabState(tabId);
+            return state && state.isRunning;
+        }
+        // Check if any tab has running automation
+        return Array.from(this.tabAutomations.values()).some(state => state.isRunning);
+    }
+
+    initializeBackground() {
+        this.setupMessageListeners();
+        this.setupTabListeners();
+        this.loadSettings();
+        this.log('Enhanced background script initialized');
+    }
+
+    setupMessageListeners() {
+        browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+            this.handleMessage(message, sender, sendResponse);
+            return true;
+        });
+    }
+
+    setupTabListeners() {
+        browser.tabs.onActivated.addListener((activeInfo) => {
+            this.handleTabActivated(activeInfo);
+        });
+        browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+            this.handleTabUpdated(tabId, changeInfo, tab);
+        });
+        browser.tabs.onRemoved.addListener((tabId) => {
+            this.handleTabRemoved(tabId);
+        });
+    }
+
+    async loadSettings() {
+        try {
+            const result = await browser.storage.local.get(['settings']);
+            if (result.settings) {
+                this.settings = { ...this.settings, ...result.settings };
+            }
+            this.log('Settings loaded:', this.settings);
+        } catch (error) {
+            this.logError('Failed to load settings:', error);
+        }
+    }
 
   async saveSettings() {
     try {
@@ -123,11 +143,13 @@ class AutomationManager {
           sendResponse({ success: true });
           break;
         case 'prompt-completed':
-          await this.handlePromptCompleted(message.result);
+          // Pass the sender.tab.id so we know which tab this result is for
+          await this.handlePromptCompleted(message.result, sender.tab.id);
           sendResponse({ success: true });
           break;
         case 'prompt-failed':
-          await this.handlePromptFailed(message.error, message.promptIndex);
+          // Pass the sender.tab.id here as well
+          await this.handlePromptFailed(message.error, message.promptIndex, sender.tab.id);
           sendResponse({ success: true });
           break;
         case 'update-settings':
@@ -219,17 +241,9 @@ class AutomationManager {
 
       this.tabAutomations.set(tabId, tabState);
 
-      // Update global state for backward compatibility (use most recent tab)
-      this.isRunning = true;
-      this.isPaused = false;
-      this.currentTabId = tabId;
-      this.prompts = [...prompts];
-      this.currentPromptIndex = 0;
-      this.automationId = tabState.automationId;
-      this.processedResults = [];
-      this.retryAttempts = new Map();
-      this.completedPrompts = new Set();
-      this.isProcessingPrompt = false;
+      // Update minimal global state for backward compatibility
+      this.isRunning = this.hasRunningAutomation();
+      this.currentTabId = tabId; // Track most recent tab for fallbacks only
 
       this.log(`Starting automation with ${prompts.length} prompts on tab ${tabId} for company: ${companyName || 'Company'}`);
 
@@ -248,7 +262,7 @@ class AutomationManager {
       });
 
       // Start processing prompts
-      await this.processNextPrompt();
+      await this.processNextPrompt(tabId);
   }
 
 
@@ -324,113 +338,129 @@ class AutomationManager {
     }
   }
 
-  async processNextPrompt() {
+  async processNextPrompt(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) {
+        this.log(`No tab state found for tab ${tabId}`);
+        return;
+    }
+
     // Check if we should stop or pause
-    if (!this.isRunning) {
+    if (!tabState.isRunning) {
       this.log('Automation stopped, exiting processNextPrompt');
       return;
     }
 
-    if (this.isPaused) {
+    if (tabState.isPaused) {
       this.log('Automation paused, waiting for resume');
       return;
     }
 
     // Check if already processing a prompt
-    if (this.isProcessingPrompt) {
+    if (tabState.isProcessingPrompt) {
       this.log('Already processing a prompt, skipping');
       return;
     }
 
     // Check if we've completed all prompts
-    if (this.currentPromptIndex >= this.prompts.length) {
-      await this.completeAutomation();
-      return;
+    if (tabState.currentPromptIndex >= tabState.prompts.length) {
+        await this.completeAutomation(tabId);
+        return;
     }
 
-    const currentPrompt = this.prompts[this.currentPromptIndex];
+    const currentPrompt = tabState.prompts[tabState.currentPromptIndex];
     const promptNumber = this.currentPromptIndex + 1;
     
-    this.log(`Processing prompt ${promptNumber}/${this.prompts.length}: ${currentPrompt.substring(0, 50)}...`);
-    this.isProcessingPrompt = true;
+    this.log(`Processing prompt ${promptNumber}/${tabState.prompts.length}: ${currentPrompt.substring(0, 50)}...`);
+    this.updateTabState(tabId, { isProcessingPrompt: true });
 
     // Update progress - show current processing prompt number
     await this.sendMessageToPopup('automation-progress', {
       current: promptNumber,
-      total: this.prompts.length,
+      total: tabState.prompts.length,
       prompt: currentPrompt,
       status: 'processing'
     });
 
     try {
       // Validate tab is still valid
-      const isValid = await this.validateTab(this.currentTabId);
+      const isValid = await this.validateTab(tabId);
       if (!isValid) {
         throw new Error('Tab is no longer valid or not on Perplexity.ai');
       }
 
       // Send prompt to content script with increased timeouts
-      await browser.tabs.sendMessage(this.currentTabId, {
+      await browser.tabs.sendMessage(tabId, {
         type: 'execute-prompt',
         prompt: currentPrompt,
-        index: this.currentPromptIndex,
+        index: tabState.currentPromptIndex,
         timeout: this.settings.timeout,
         responseTimeout: this.settings.responseTimeout,
-        automationId: this.automationId
+        automationId: tabState.automationId
       });
 
       // Set timeout for prompt execution (longer timeout)
       this.currentTimeout = setTimeout(() => {
-        this.handlePromptTimeout();
+        this.handlePromptTimeout(tabId);
       }, this.settings.timeout);
 
     } catch (error) {
       this.logError('Failed to send prompt to content script:', error);
-      await this.handlePromptFailed(error.message, this.currentPromptIndex);
+      await this.handlePromptFailed(error.message, tabState.currentPromptIndex, tabId);
     }
   }
 
-  async handlePromptCompleted(result) {
+  // Now accept tabId directly from the content script sender
+  async handlePromptCompleted(result, tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) {
+        this.logError(`No tab state found for tab ${tabId}`);
+        return;
+    }
+	//if (!tabState) {
+	//	this.logError(`No tab state found for tab ${targetTabId}`);
+	//	return;
+	//}
     const idx = result.index;
     const promptNumber = idx + 1;
 
     // Check if we've already processed this completion to prevent duplicates
-    if (this.completedPrompts.has(idx)) {
+    if (tabState.completedPrompts.has(idx)) {
       this.log(`Prompt ${promptNumber} completion already processed, ignoring duplicate`);
       return;
     }
 
     // Mark this prompt as completed
-    this.completedPrompts.add(idx);
+    tabState.completedPrompts.add(idx);
     this.log(`Prompt ${promptNumber} completed successfully`);
 
     // Clear timeout and processing flag
     this.clearCurrentTimeout();
-    this.isProcessingPrompt = false;
+    this.updateTabState(tabId, { isProcessingPrompt: false });
 
     // Process and store result using the idx
     const processedResult = {
       index: idx,
       promptNumber: promptNumber,
-      prompt: this.prompts[idx],
+      prompt: tabState.prompts[idx],
       response: result.response || '',
       timestamp: result.timestamp || Date.now(),
       success: true,
-      retryCount: this.retryAttempts.get(idx) || 0,
+      retryCount: tabState.retryAttempts.get(idx) || 0,
       processingTime: Date.now() - (result.startTime || Date.now()),
-      automationId: this.automationId
+      automationId: tabState.automationId
     };
 
-    this.processedResults.push(processedResult);
+    tabState.processedResults.push(processedResult);
 
     // Save result
-    await this.savePromptResult(idx, processedResult);
+    await this.savePromptResult(tabId, idx, processedResult);
 
     // Update progress with completion count
     await this.sendMessageToPopup('automation-progress', {
-      current: this.processedResults.length,
-      total: this.prompts.length,
-      prompt: this.prompts[idx],
+      current: tabState.processedResults.length,
+	  total: tabState.prompts.length,
+	  prompt: tabState.prompts[idx],
       status: 'completed',
       response: result.response,
       hasResponse: !!(result.response && result.response.length > 0)
@@ -438,12 +468,12 @@ class AutomationManager {
 
     // NEW: Add response to background document manager
     if (result.response && result.response.length > 0) {
-        const documentManager = this.getTabDocumentManager(this.currentTabId);
-        documentManager.addResponse(idx, this.prompts[idx], result.response);
+        const documentManager = this.getTabDocumentManager(tabId);
+        documentManager.addResponse(idx, tabState.prompts[idx], result.response);
 
 
         // Notify popup about document update (if popup is open)
-        const docMgr = this.getTabDocumentManager(this.currentTabId);
+        const docMgr = this.getTabDocumentManager(tabId);
         await this.sendMessageToPopup('document-updated', {
             responseCount: docMgr.getResponseCount(),
             status: 'collecting',
@@ -451,23 +481,22 @@ class AutomationManager {
         });
     }
 
-    // Move pointer forward only if idx matches currentPromptIndex
-    if (idx === this.currentPromptIndex) {
-      this.currentPromptIndex++;
+    // Advance only if this matches
+    if (idx === tabState.currentPromptIndex) {
+        this.updateTabState(tabId, { currentPromptIndex: tabState.currentPromptIndex + 1 });
     }
-    this.retryAttempts.delete(idx);
+    tabState.retryAttempts.delete(idx);
     await this.saveAutomationState();
 
     // Wait before next prompt or complete
-    if (this.currentPromptIndex < this.prompts.length) {
-      this.log(`Waiting ${this.settings.delay}ms before next prompt...`);
-      this.currentTimeout = setTimeout(() => {
-        if (this.isRunning && !this.isPaused) {
-          this.processNextPrompt();
-        }
-      }, this.settings.delay);
+    if (tabState.currentPromptIndex < tabState.prompts.length) {
+        this.currentTimeout = setTimeout(() => {
+            if (tabState.isRunning && !tabState.isPaused) {
+                this.processNextPrompt(tabId);
+            }
+        }, this.settings.delay);
     } else {
-      await this.completeAutomation();
+        await this.completeAutomation(tabId);
     }
   }
 

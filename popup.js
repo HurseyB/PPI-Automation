@@ -1048,31 +1048,12 @@ class DocumentManager {
                 html += `<div class="response-content">${processedResponse}</div>`;
             });
 
-        // Add summary if available
-        //if (this.document.summary) {
-        //    html += `
-        //        <div class="page-break">
-        //            <h1>Summary</h1>
-        //            <p><strong>Total Prompts:</strong> ${this.document.summary.total || this.document.responses.length}</p>
-        //    `;
-
-        //    if (this.document.summary.successful !== undefined) {
-        //        html += `<p><strong>Successful:</strong> ${this.document.summary.successful}</p>`;
-        //    }
-
-        //    if (this.document.summary.successRate) {
-        //        html += `<p><strong>Success Rate:</strong> ${this.document.summary.successRate}%</p>`;
-        //    }
-
-        //    html += `</div>`;
-        //}
-
         html += `</body></html>`;
         return html;
     }
 
     /**
-     * NEW METHOD: Process response text to preserve HTML formatting
+     * Process response text to preserve HTML formatting
      * Add this new method to the DocumentManager class
      */
     processResponseText(responseText) {
