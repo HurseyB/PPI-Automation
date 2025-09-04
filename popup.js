@@ -33,6 +33,19 @@ class PerplexityAutomator {
         this.initializeNotificationSettings();
         this.bindEventListeners();
         this.loadPrompts();
+    // ADDED: Load document manager state first
+        this.documentManager.loadDocumentState().then(() => {
+            this.updateResponseCount();
+            if (this.documentManager.hasResponses()) {
+                this.enableDownloadButtons();
+                if (this.documentManager.document.summary) {
+                    this.updateDocumentStatus('ready', 'Document ready for download');
+                } else {
+                    this.updateDocumentStatus('partial', 'Partial document available');
+                }
+            }
+        });
+
         this.loadUIState().then(state => {
             if (!state) return;
 
@@ -718,6 +731,37 @@ class PerplexityAutomator {
 
 // NEW: Document Management Class
 class DocumentManager {
+    async saveDocumentState() {
+        try {
+            await browser.storage.local.set({
+                documentManagerState: this.document
+            });
+        } catch (error) {
+            console.error('Failed to save document state:', error);
+        }
+    }
+
+    async loadDocumentState() {
+        try {
+            const result = await browser.storage.local.get('documentManagerState');
+            if (result.documentManagerState) {
+                this.document = result.documentManagerState;
+                return true;
+            }
+        } catch (error) {
+            console.error('Failed to load document state:', error);
+        }
+        return false;
+    }
+
+    async clearDocumentState() {
+        try {
+            await browser.storage.local.remove('documentManagerState');
+        } catch (error) {
+            console.error('Failed to clear document state:', error);
+        }
+    }
+
     constructor() {
         this.document = {
             title: 'PERPLEXITY AI AUTOMATION REPORT',
@@ -736,6 +780,7 @@ class DocumentManager {
             responses: [],
             summary: null
         };
+        this.saveDocumentState();
     }
 
     addResponse(promptNumber, promptText, responseText) {
@@ -762,7 +807,11 @@ class DocumentManager {
 
         // Sort responses by prompt number
         this.document.responses.sort((a, b) => a.promptNumber - b.promptNumber);
+
+        this.saveDocumentState();
     }
+
+
 
     finalizeDocument(summary) {
         this.document.summary = summary;
@@ -780,6 +829,7 @@ class DocumentManager {
     clearDocument() {
         this.document.responses = [];
         this.document.summary = null;
+        this.clearDocumentState();
     }
 
     generateTextDocument() {
@@ -883,6 +933,7 @@ class DocumentManager {
     escapeRtf(text) {
         return text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}');
     }
+
 }
 
 // Initialize the automator
