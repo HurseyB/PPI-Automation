@@ -4,6 +4,16 @@
  */
 
 class PerplexityAutomator {
+    async saveUIState(state) {
+      // state: { current, total, percentage, currentPromptText, responseCount, documentStatus }
+      await browser.storage.local.set({ popupUIState: state });
+    }
+
+    async loadUIState() {
+      const result = await browser.storage.local.get('popupUIState');
+      return result.popupUIState || null;
+    }
+
     constructor() {
         this.prompts = [];
         this.isRunning = false;
@@ -12,6 +22,29 @@ class PerplexityAutomator {
         this.initializeElements();
         this.bindEventListeners();
         this.loadPrompts();
+        this.loadUIState().then(state => {
+          if (!state) return;
+          // Show progress if there's ongoing automation
+          if (state.total > 0) {
+            this.showProgressSection();
+            // Reconstruct progress bar
+            this.progressText.textContent = `${state.current} of ${state.total} completed`;
+            this.progressFill.style.width = `${state.percentage}%`;
+            this.currentPrompt.textContent = state.currentPromptText;
+            // Restore document status and count
+            this.responseCount.textContent = state.responseCount;
+            this.documentStatus.textContent = state.documentStatus;
+            // Set status class
+            const cls = state.documentStatus === 'Document ready for download'
+              ? 'status status--success'
+              : state.documentStatus === 'collecting'
+                ? 'status status--info'
+                : 'status status--partial';
+            this.documentStatus.className = cls;
+            // Enable download buttons if responses exist
+            if (state.responseCount > 0) this.enableDownloadButtons();
+          }
+        });
         this.setupMessageListener();
     }
 
@@ -142,6 +175,15 @@ class PerplexityAutomator {
             this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
             this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
         }
+        const uiState = {
+          current: data.current,
+          total: data.total,
+          percentage,
+          currentPromptText: this.currentPrompt.textContent,
+          responseCount: this.documentManager.getResponseCount(),
+          documentStatus: this.documentStatus.textContent
+        };
+        this.saveUIState(uiState);
     }
 
     handleAutomationComplete(data) {
@@ -158,6 +200,17 @@ class PerplexityAutomator {
         this.documentManager.finalizeDocument(data.summary);
         this.updateDocumentStatus('ready', 'Document ready for download');
         this.enableDownloadButtons();
+        
+        // Persist final state
+        this.saveUIState({
+          current: data.completed,
+          total: data.total,
+          percentage: Math.round((data.completed/data.total)*100),
+          currentPromptText: this.currentPrompt.textContent,
+          responseCount: this.documentManager.getResponseCount(),
+          documentStatus: this.documentStatus.textContent
+        });
+
     }
 
     handleAutomationStopped(data) {
@@ -171,6 +224,17 @@ class PerplexityAutomator {
             this.updateDocumentStatus('partial', 'Partial document available');
             this.enableDownloadButtons();
         }
+
+        // Persist final state
+         this.saveUIState({
+          current: data.completed,
+          total: data.total,
+          percentage: Math.round((data.completed/data.total)*100),
+          currentPromptText: this.currentPrompt.textContent,
+          responseCount: this.documentManager.getResponseCount(),
+          documentStatus: this.documentStatus.textContent
+        });
+
     }
 
     handleAutomationError(data) {
