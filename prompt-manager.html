@@ -89,6 +89,32 @@
                     </div>
                 </div>
             </div>
+            <div class="section-header">
+                <h2>Automation Log</h2>
+                <div class="section-actions">
+                    <button id="clearLogBtn" class="btn btn-secondary btn-sm">
+                        <span class="btn-icon">🗑️</span>
+                        Clear Log
+                    </button>
+                </div>
+            </div>
+
+            <div class="progress-log-container">
+                <div class="progress-current" id="progressCurrent" style="display: none;">
+                    <div class="progress-header">
+                        <h3>Current Automation</h3>
+                        <span id="progressText">0 of 0 completed</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="current-prompt" id="currentPrompt">Ready to start</div>
+                </div>
+
+                <div class="automation-log" id="automationLog">
+                    <p class="log-empty">No automation activity yet. Start an automation to see logs here.</p>
+                </div>
+            </div>
         </section>
     </main>
 

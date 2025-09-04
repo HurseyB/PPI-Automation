@@ -125,37 +125,23 @@ class PerplexityAutomator {
     }
 
     initializeElements() {
-        // Input elements
-        this.promptInput = document.getElementById('promptInput');
-        this.addPromptBtn = document.getElementById('addPromptBtn');
-        this.clearAllBtn = document.getElementById('clearAllBtn');
+      // Only keep elements that exist in simplified popup
+      this.openPromptManagerBtn = document.getElementById('openPromptManagerBtn');
+      this.promptCount = document.getElementById('promptCount');
 
-        // Display elements
-        this.promptsList = document.getElementById('promptsList');
-        this.promptCount = document.getElementById('promptCount');
-        this.toggleViewBtn = document.getElementById('toggleViewBtn');
-        this.openPromptManagerBtn = document.getElementById('openPromptManagerBtn');
+      // Document management elements
+      this.downloadDocxBtn = document.getElementById('downloadDocxBtn');
+      this.clearDocumentBtn = document.getElementById('clearDocumentBtn');
+      this.documentStatus = document.getElementById('documentStatus');
+      this.responseCount = document.getElementById('responseCount');
 
-        // Document management elements - NEW
-        //this.downloadTxtBtn = document.getElementById('downloadTxtBtn'); // -- This is unused, and removed from html. Keeping comment for my records.
-        this.downloadDocxBtn = document.getElementById('downloadDocxBtn');
-        this.clearDocumentBtn = document.getElementById('clearDocumentBtn');
-        this.documentStatus = document.getElementById('documentStatus');
-        this.responseCount = document.getElementById('responseCount');
-
-        // Automation elements
-        this.startAutomationBtn = document.getElementById('startAutomationBtn');
-        this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
-        this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
-        this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
-
-        // Progress elements
-        this.progressSection = document.querySelector('.progress-section');
-        this.progressText = document.getElementById('progressText');
-        this.progressFill = document.getElementById('progressFill');
-        this.currentPrompt = document.getElementById('currentPrompt');
-        this.automationLog = document.getElementById('automationLog');
+      // Automation elements
+      this.startAutomationBtn = document.getElementById('startAutomationBtn');
+      this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
+      this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
+      this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
     }
+
 
     initializeNotificationSettings() {
       // Initialize notification elements
@@ -220,67 +206,25 @@ class PerplexityAutomator {
 
 
     bindEventListeners() {
-        // Input events
-        this.addPromptBtn.addEventListener('click', () => this.addPrompt());
-        this.clearAllBtn.addEventListener('click', () => this.clearAllPrompts());
-        this.promptInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && e.ctrlKey) {
-                this.addPrompt();
-            }
-        });
+      // Open prompt manager
+      if (this.openPromptManagerBtn) {
+        this.openPromptManagerBtn.addEventListener('click', () => this.openPromptManager());
+      }
 
-        // View toggle
-        this.toggleViewBtn.addEventListener('click', () => this.toggleAllPrompts());
+      // Document management events
+      this.downloadDocxBtn.addEventListener('click', () => this.documentManager.downloadDocx());
+      this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
-        // Open prompt manager
-        if (this.openPromptManagerBtn) {
-            this.openPromptManagerBtn.addEventListener('click', () => this.openPromptManager());
-        }
+      // Automation controls
+      this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
+      this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
+      this.resumeAutomationBtn.addEventListener('click', () => this.resumeAutomation());
+      this.stopAutomationBtn.addEventListener('click', () => this.stopAutomation());
 
-
-        // Document management events - NEW
-        //this.downloadTxtBtn.addEventListener('click', () => this.documentManager.downloadTxt()); // -- This is unused, and removed from html. Keeping comment for my records.
-        this.downloadDocxBtn.addEventListener('click', () => this.documentManager.downloadDocx());
-        this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
-
-        // Automation controls
-        // Automation controls
-        this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
-        this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
-        this.resumeAutomationBtn.addEventListener('click', () => this.resumeAutomation());
-        this.stopAutomationBtn.addEventListener('click', () => this.stopAutomation());
-
-        // Input validation
-        this.promptInput.addEventListener('input', () => this.validateInput());
-
-        // Notification settings
-        if (this.enableNotifications) {
-          this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
-        }
-    }
-
-    setupPromptListEventHandlers() {
-        // Use event delegation for dynamically created prompt buttons
-        this.promptsList.addEventListener('click', async (event) => {
-            const button = event.target.closest('button[data-action]');
-            if (!button) return;
-
-            event.stopPropagation(); // Prevent triggering the prompt expansion
-
-            const action = button.dataset.action;
-            const index = parseInt(button.dataset.index);
-
-            try {
-                if (action === 'edit') {
-                    await this.editPrompt(index);
-                } else if (action === 'delete') {
-                    await this.deletePrompt(index);
-                }
-            } catch (error) {
-                console.error(`Error performing ${action} action:`, error);
-                this.showNotification(`Error: Could not ${action} prompt`, 'error');
-            }
-        });
+      // Notification settings
+      if (this.enableNotifications) {
+        this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
+      }
     }
 
     setupMessageListener() {
@@ -515,26 +459,6 @@ class PerplexityAutomator {
         }
     }
 
-
-    // Existing methods remain unchanged...
-    showProgressSection() {
-        this.progressSection.style.display = 'block';
-    }
-
-    hideProgressSection() {
-        this.progressSection.style.display = 'none';
-    }
-
-    clearLog() {
-        this.automationLog.innerHTML = '';
-    }
-
-    logMessage(message) {
-        const timestamp = new Date().toLocaleTimeString();
-        this.automationLog.innerHTML += `<div class="log-entry">[${timestamp}] ${message}</div>`;
-        this.automationLog.scrollTop = this.automationLog.scrollHeight;
-    }
-
     logError(message, error) {
         console.error(`[Perplexity Automator] ${message}`, error);
         this.logMessage(`❌ ${message}: ${error}`);
@@ -601,42 +525,6 @@ class PerplexityAutomator {
         }
         if (this.prompts.length > 0) {
             this.renderPrompts();
-        }
-    }
-
-    validateInput() {
-        const isEmpty = !this.promptInput.value.trim();
-        this.addPromptBtn.disabled = isEmpty;
-    }
-
-    async addPrompt() {
-        const text = this.promptInput.value.trim();
-        if (!text) return;
-
-        if (this.prompts.length >= 50) {
-            this.showNotification('Maximum 50 prompts allowed', 'warning');
-            return;
-        }
-
-        this.prompts.push(text);
-        this.promptInput.value = '';
-        this.validateInput();
-        
-        await this.savePrompts();
-        this.renderPrompts();
-        this.updatePromptCount();
-        this.updateStartButton();
-    }
-
-    async clearAllPrompts() {
-        if (this.prompts.length === 0) return;
-        
-        if (confirm('Are you sure you want to clear all prompts?')) {
-            this.prompts = [];
-            await this.savePrompts();
-            this.renderPrompts();
-            this.updatePromptCount();
-            this.updateStartButton();
         }
     }
 

@@ -13,6 +13,7 @@ class PromptManager {
         this.initializeElements();
         this.bindEventListeners();
         this.loadPrompts();
+        this.setupMessageListener();
     }
 
     initializeElements() {
@@ -46,6 +47,15 @@ class PromptManager {
         this.exportPreview = document.getElementById('exportPreview');
         this.exportSelected = document.getElementById('exportSelected');
         this.includeMetadata = document.getElementById('includeMetadata');
+
+        // Progress log elements
+        this.progressCurrent = document.getElementById('progressCurrent');
+        this.progressText = document.getElementById('progressText');
+        this.progressFill = document.getElementById('progressFill');
+        this.currentPrompt = document.getElementById('currentPrompt');
+        this.automationLog = document.getElementById('automationLog');
+        this.clearLogBtn = document.getElementById('clearLogBtn');
+
     }
 
     bindEventListeners() {
@@ -80,6 +90,9 @@ class PromptManager {
         // Export options
         this.exportSelected.addEventListener('change', () => this.updateExportPreview());
         this.includeMetadata.addEventListener('change', () => this.updateExportPreview());
+
+        // Clear log button
+        this.clearLogBtn.addEventListener('click', () => this.clearLog());
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
@@ -674,6 +687,130 @@ class PromptManager {
             }, 300);
         }, 3000);
     }
+
+    // Progress log management methods
+    setupMessageListener() {
+      browser.runtime.onMessage.addListener((message) => {
+        try {
+          switch (message.type) {
+            case 'automation-started':
+              this.handleAutomationStarted(message.data);
+              break;
+            case 'automation-progress':
+              this.handleProgressUpdate(message.data);
+              break;
+            case 'automation-complete':
+              this.handleAutomationComplete(message.data);
+              break;
+            case 'automation-stopped':
+              this.handleAutomationStopped(message.data);
+              break;
+            case 'automation-error':
+              this.handleAutomationError(message.data);
+              break;
+            case 'automation-paused':
+              this.handleAutomationPaused(message.data);
+              break;
+            case 'automation-resumed':
+              this.handleAutomationResumed(message.data);
+              break;
+          }
+        } catch (error) {
+          console.error('Error handling message in prompt manager:', error);
+        }
+      });
+    }
+
+    handleAutomationStarted(data) {
+      this.showProgressSection();
+      this.progressText.textContent = '0 of ' + data.total + ' completed';
+      this.progressFill.style.width = '0%';
+      this.currentPrompt.textContent = 'Starting automation...';
+      this.logMessage('🚀 Automation started with ' + data.total + ' prompts');
+    }
+
+    handleProgressUpdate(data) {
+      const current = data.current;
+      const total = data.total;
+      this.progressText.textContent = `${current} of ${total} completed`;
+      const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+      this.progressFill.style.width = `${percentage}%`;
+
+      if (data.status === 'processing' && data.prompt) {
+        this.currentPrompt.textContent = `Processing: ${data.prompt.substring(0, 50)}...`;
+        this.logMessage(`⚙️ Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
+      } else if (data.status === 'completed') {
+        this.currentPrompt.textContent = `Completed prompt ${current}/${total}`;
+        this.logMessage(`✅ Prompt ${current} completed successfully`);
+      } else if (data.status === 'failed') {
+        this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
+        this.logMessage(`❌ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
+      } else if (data.status === 'retrying') {
+        this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
+        this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
+      }
+    }
+
+    handleAutomationComplete(data) {
+      this.currentPrompt.textContent = `Automation completed! ${data.completed}/${data.total} prompts processed`;
+      this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
+      if (data.summary) {
+        this.logMessage(`📊 Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
+      }
+      setTimeout(() => this.hideProgressSection(), 5000); // Hide after 5 seconds
+    }
+
+    handleAutomationStopped(data) {
+      this.currentPrompt.textContent = 'Automation stopped';
+      this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
+      setTimeout(() => this.hideProgressSection(), 3000);
+    }
+
+    handleAutomationError(data) {
+      this.currentPrompt.textContent = 'Automation error occurred';
+      this.logMessage(`🚨 Error: ${data.error || 'Unknown error occurred'}`);
+    }
+
+    handleAutomationPaused(data) {
+      this.currentPrompt.textContent = 'Automation paused';
+      this.logMessage(`⏸️ Automation paused at prompt ${data.currentIndex + 1}/${data.total}`);
+    }
+
+    handleAutomationResumed(data) {
+      this.currentPrompt.textContent = `Resuming automation...`;
+      this.logMessage(`▶️ Automation resumed from prompt ${data.currentIndex + 1}/${data.total}`);
+    }
+
+    showProgressSection() {
+      this.progressCurrent.style.display = 'block';
+    }
+
+    hideProgressSection() {
+      this.progressCurrent.style.display = 'none';
+    }
+
+    logMessage(message) {
+      const timestamp = new Date().toLocaleTimeString();
+      const logEntry = document.createElement('div');
+      logEntry.className = 'log-entry';
+      logEntry.innerHTML = `<span class="log-timestamp">[${timestamp}]</span> ${message}`;
+
+      // Remove empty state message if it exists
+      const emptyState = this.automationLog.querySelector('.log-empty');
+      if (emptyState) {
+        emptyState.remove();
+      }
+
+      this.automationLog.appendChild(logEntry);
+      this.automationLog.scrollTop = this.automationLog.scrollHeight;
+    }
+
+    clearLog() {
+      if (confirm('Are you sure you want to clear the automation log?')) {
+        this.automationLog.innerHTML = '<p class="log-empty">No automation activity yet. Start an automation to see logs here.</p>';
+      }
+    }
+
 }
 
 // Add notification animations
