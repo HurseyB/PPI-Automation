@@ -163,61 +163,61 @@ class PerplexityAutomator {
       document.head.appendChild(style);
   }
 
-  // NEW: Create and show status overlay
+  // Create and show status overlay (single‐instance)
   showStatusOverlay(status, message) {
-      // Only show if status changed or overlay was previously closed by user
-      const statusChanged = this.currentStatus !== status;
+    // Always clear any existing overlay elements
+    document.querySelectorAll('.perplexity-automator-overlay')
+      .forEach(el => el.remove());
 
-      if (statusChanged) {
-          this.overlayVisible = true; // Re-show overlay on status change
-          this.currentStatus = status;
-      }
+    // Reset state for this new status
+    this.overlayVisible = true;
+    this.currentStatus = status;
 
-      if (!this.overlayVisible) return;
+    // Create and append new overlay
+    this.overlay = document.createElement('div');
+    this.overlay.className = `perplexity-automator-overlay status-${status}`;
 
-      // Remove existing overlay
-      this.hideStatusOverlay();
+    // Add message text
+    const messageSpan = document.createElement('span');
+    messageSpan.textContent = message;
+    this.overlay.appendChild(messageSpan);
 
-      // Create new overlay
-      this.overlay = document.createElement('div');
-      this.overlay.className = `perplexity-automator-overlay status-${status}`;
+    // Add close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'perplexity-automator-overlay-close';
+    closeBtn.innerHTML = '×';
+    closeBtn.title = 'Close';
+    closeBtn.addEventListener('click', () => this.closeStatusOverlay());
+    this.overlay.appendChild(closeBtn);
 
-      // Add message text
-      const messageSpan = document.createElement('span');
-      messageSpan.textContent = message;
-      this.overlay.appendChild(messageSpan);
+    // Add to page
+    document.body.appendChild(this.overlay);
 
-      // Add close button
-      const closeBtn = document.createElement('button');
-      closeBtn.className = 'perplexity-automator-overlay-close';
-      closeBtn.innerHTML = '×';
-      closeBtn.title = 'Close';
-      closeBtn.addEventListener('click', () => this.closeStatusOverlay());
-      this.overlay.appendChild(closeBtn);
-
-      // Add to page
-      document.body.appendChild(this.overlay);
-
-      console.log('Status overlay shown:', status, message);
+    console.log('Status overlay shown:', status, message);
   }
 
   // NEW: Close overlay (user initiated)
   closeStatusOverlay() {
-      this.overlayVisible = false;
-      this.hideStatusOverlay();
+    // Remove all overlays and clear state
+    document.querySelectorAll('.perplexity-automator-overlay')
+      .forEach(el => el.remove());
+    this.overlay = null;
+    this.overlayVisible = false;
+    this.currentStatus = null;
   }
 
-  // NEW: Hide overlay (programmatic)
+  // Hide overlay programmatically
   hideStatusOverlay() {
-      if (this.overlay && this.overlay.parentNode) {
-          this.overlay.style.animation = 'slideOutToRight 0.3s ease-in';
-          setTimeout(() => {
-              if (this.overlay && this.overlay.parentNode) {
-                  this.overlay.parentNode.removeChild(this.overlay);
-              }
-              this.overlay = null;
-          }, 300);
-      }
+    // Simply remove any existing overlay nodes
+    document.querySelectorAll('.perplexity-automator-overlay').forEach(el => {
+      el.style.animation = 'slideOutToRight 0.3s ease-in';
+      setTimeout(() => el.remove(), 300);
+    });
+
+    // Reset internal references
+    this.overlay = null;
+    this.currentStatus = null;
+    this.overlayVisible = true;
   }
 
   setupMessageListener() {
