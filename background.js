@@ -215,6 +215,12 @@ class AutomationManager {
             break;
         case 'set-tab-company-name':
             await this.setTabCompanyName(message.tabId, message.companyName);
+            // Also update tab title when company name is set
+            await this.updateTabTitle(message.tabId, message.companyName);
+            sendResponse({ success: true });
+            break;
+        case 'update-tab-title':
+            await this.updateTabTitle(message.tabId, message.companyName);
             sendResponse({ success: true });
             break;
         case 'get-tab-document-data':
@@ -234,6 +240,19 @@ class AutomationManager {
       this.logError('Error handling message:', error);
       sendResponse({ success: false, error: error.message });
     }
+  }
+
+  // NEW: Update tab title via content script
+  async updateTabTitle(tabId, companyName) {
+    try {
+      await browser.tabs.sendMessage(tabId, {
+        type: 'update-tab-title',
+        companyName: companyName || ''
+      });
+        this.log(`Tab ${tabId} title updated for company: ${companyName || 'Default'}`);
+      } catch (error) {
+        this.logError(`Failed to update tab ${tabId} title:`, error);
+      }
   }
 
   async startAutomation(prompts, tabId, companyName = '') {

@@ -74,11 +74,27 @@ class PerplexityAutomator {
         this.executePrompt(message.prompt, message.index);
       } else if (message.type === 'stop-automation') {
         this.isExecuting = false;
+      } else if (message.type === 'update-tab-title') {
+        this.updateTabTitle(message.companyName);
       }
       sendResponse({ success: true });
       return true;
     });
   }
+
+  // Update tab title with company name
+  updateTabTitle(companyName) {
+      try {
+          const title = companyName && companyName.trim()
+              ? `${companyName.trim()} Analyses`
+              : 'Perplexity AI';
+          document.title = title;
+          console.log('Tab title updated to:', title);
+      } catch (error) {
+          console.error('Failed to update tab title:', error);
+      }
+  }
+
 
   async waitForPageReady() {
     if (document.readyState !== 'complete') {

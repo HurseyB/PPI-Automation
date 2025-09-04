@@ -95,6 +95,8 @@ class PerplexityAutomator {
             if (name) {
                 this.companyNameInput.value = name;
                 this.documentManager.companyName = name;
+                // Update tab title when loading existing company name
+                await this.updateTabTitle(name);
             }
 
             // Restore document data FIRST if it exists, but prioritize background sync
@@ -307,7 +309,13 @@ class PerplexityAutomator {
 
       // Persist company name on change
       if (this.companyNameInput) {
-        this.companyNameInput.addEventListener('input', () => {
+        this.companyNameInput.addEventListener('input', async () => {
+          // Get current tab and update title immediately
+          const companyName = this.companyNameInput.value.trim();
+
+          // Update tab title in real-time
+          await this.updateTabTitle(companyName);
+
           // Save only the companyName in UI state
           this.saveUIState({
             // Minimal state object; other fields will be merged internally
@@ -319,6 +327,20 @@ class PerplexityAutomator {
             documentStatus: this.documentStatus ? this.documentStatus.textContent : 'Ready'
           });
         });
+      }
+    }
+
+    // NEW: Update tab title helper function
+    async updateTabTitle(companyName) {
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        await browser.runtime.sendMessage({
+          type: 'update-tab-title',
+          tabId: tab.id,
+          companyName: companyName || ''
+        });
+      } catch (error) {
+        console.error('Failed to update tab title:', error);
       }
     }
 
@@ -738,6 +760,11 @@ class PerplexityAutomator {
             }
 
             const companyName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+            // Update tab title when starting automation
+            if (companyName) {
+              await this.updateTabTitle(companyName);
+
+            }
             const promptsToSend = this.prompts.map(text => {
                 if (!companyName) return text;
                 return text
