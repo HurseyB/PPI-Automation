@@ -271,8 +271,7 @@ class PerplexityAutomator {
         }
         this.logMessage('Automation started with ' + data.total + ' prompts');
         
-        // NEW: Initialize document for new automation
-        this.documentManager.initializeDocument(data.total);
+        // NEW: Document initialization handled by background script
         this.updateDocumentStatus('collecting', 'Collecting responses...');
     }
 
@@ -291,11 +290,11 @@ class PerplexityAutomator {
             this.currentPrompt.textContent = `Completed prompt ${current}/${total}`;
             this.logMessage(`✓ Prompt ${current} completed successfully`);
             
-            // NEW: Add response to document if available
+            // NEW: Response collection handled by background script, just update UI
             if (data.response && data.prompt) {
-                this.documentManager.addResponse(current, data.prompt, data.response);
                 this.updateResponseCount();
             }
+
         } else if (data.status === 'failed') {
             this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
             this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
@@ -439,16 +438,23 @@ class PerplexityAutomator {
         }
     }
 
-    clearDocument() {
+    async clearDocument() {
         if (confirm('Are you sure you want to clear the document? This will remove all collected responses.')) {
+            // Clear background document as well
+            try {
+                await browser.runtime.sendMessage({ type: 'clear-background-document' });
+            } catch (error) {
+                console.error('Failed to clear background document:', error);
+            }
+
             this.documentManager.clearDocument();
             this.updateResponseCount();
             this.updateDocumentStatus('ready', 'Ready');
-            //this.downloadTxtBtn.disabled = true;
             this.downloadDocxBtn.disabled = true;
             this.showNotification('Document cleared', 'info');
         }
     }
+
 
     // Existing methods remain unchanged...
     showProgressSection() {
@@ -743,15 +749,21 @@ class DocumentManager {
 
     async loadDocumentState() {
         try {
-            const result = await browser.storage.local.get('documentManagerState');
-            if (result.documentManagerState) {
-                this.document = result.documentManagerState;
-                return true;
+            // Load from background script instead of local storage
+            const response = await browser.runtime.sendMessage({ type: 'get-document-data' });
+            if (response && response.document) {
+                this.document = response.document;
+                console.log('Document state loaded from background:', this.getResponseCount(), 'responses');
             }
         } catch (error) {
-            console.error('Failed to load document state:', error);
+            console.error('Failed to load document state from background:', error);
+            // Fallback to local storage for backward compatibility
+            const result = await browser.storage.local.get(['documentState']);
+            if (result.documentState) {
+                this.document = result.documentState;
+                console.log('Document state loaded from local storage fallback:', this.getResponseCount(), 'responses');
+            }
         }
-        return false;
     }
 
     async clearDocumentState() {

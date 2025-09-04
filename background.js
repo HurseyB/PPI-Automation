@@ -25,6 +25,7 @@ class AutomationManager {
       enableRetries: true,
       pauseOnError: false
     };
+    this.backgroundDocumentManager = new BackgroundDocumentManager();
     this.initializeBackground();
   }
 
@@ -147,6 +148,16 @@ class AutomationManager {
           const permissionGranted = await this.ensureNotificationPermission();
           sendResponse({ success: permissionGranted });
           break;
+        case 'get-document-data':
+          // Provide document data to popup
+          const documentData = this.backgroundDocumentManager.getDocumentData();
+          sendResponse(documentData);
+          break;
+        case 'clear-background-document':
+          // Clear background document
+          this.backgroundDocumentManager.clearDocument();
+          sendResponse({ success: true });
+          break;
         default:
           this.logError('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -188,6 +199,9 @@ class AutomationManager {
 
     // Save automation state
     await this.saveAutomationState();
+
+    // Initialize background document collection
+    this.backgroundDocumentManager.initializeDocument(this.prompts.length);
 
     // Notify popup of start
     await this.sendMessageToPopup('automation-started', {
@@ -384,6 +398,18 @@ class AutomationManager {
       hasResponse: !!(result.response && result.response.length > 0)
     });
 
+    // NEW: Add response to background document manager
+    if (result.response && result.response.length > 0) {
+        this.backgroundDocumentManager.addResponse(idx, this.prompts[idx], result.response);
+
+        // Notify popup about document update (if popup is open)
+        await this.sendMessageToPopup('document-updated', {
+            responseCount: this.backgroundDocumentManager.getResponseCount(),
+            status: 'collecting',
+            message: 'Collecting responses...'
+        });
+    }
+
     // Move pointer forward only if idx matches currentPromptIndex
     if (idx === this.currentPromptIndex) {
       this.currentPromptIndex++;
@@ -533,6 +559,9 @@ class AutomationManager {
 
     // Generate summary
     const summary = this.generateAutomationSummary();
+
+    // Finalize background document
+    this.backgroundDocumentManager.finalizeDocument(summary);
 
     // Clear automation state
     await this.clearAutomationState();
@@ -964,6 +993,118 @@ class AutomationManager {
   logError(message, error) {
     console.error(`[Perplexity Automator Background ERROR] ${message}`, error);
   }
+}
+
+/**
+ * Document Manager for Background Script
+ * Handles document collection independently of popup state
+ */
+class BackgroundDocumentManager {
+    constructor() {
+        this.document = {
+            title: 'Perplexity AI Automation Results',
+            timestamp: null,
+            prompts: [],
+            responses: [],
+            summary: null,
+            totalPrompts: 0,
+            completedPrompts: 0
+        };
+        this.loadDocumentState();
+    }
+
+    async loadDocumentState() {
+        try {
+            const result = await browser.storage.local.get(['backgroundDocument']);
+            if (result.backgroundDocument) {
+                this.document = result.backgroundDocument;
+                console.log('Background document state loaded:', this.getResponseCount(), 'responses');
+            }
+        } catch (error) {
+            console.error('Failed to load background document state:', error);
+        }
+    }
+
+    async saveDocumentState() {
+        try {
+            await browser.storage.local.set({ backgroundDocument: this.document });
+        } catch (error) {
+            console.error('Failed to save background document state:', error);
+        }
+    }
+
+    initializeDocument(totalPrompts) {
+        this.document = {
+            title: 'Perplexity AI Automation Results',
+            timestamp: new Date().toISOString(),
+            prompts: [],
+            responses: [],
+            summary: null,
+            totalPrompts: totalPrompts,
+            completedPrompts: 0
+        };
+        this.saveDocumentState();
+    }
+
+    addResponse(promptIndex, promptText, responseText) {
+        const responseData = {
+            index: promptIndex,
+            prompt: promptText,
+            response: responseText,
+            timestamp: new Date().toISOString()
+        };
+
+        // Add or update response
+        const existingIndex = this.document.responses.findIndex(r => r.index === promptIndex);
+        if (existingIndex >= 0) {
+            this.document.responses[existingIndex] = responseData;
+        } else {
+            this.document.responses.push(responseData);
+        }
+
+        // Sort responses by index
+        this.document.responses.sort((a, b) => a.index - b.index);
+
+        this.document.completedPrompts = this.document.responses.length;
+        this.saveDocumentState();
+
+        console.log(`Background document: Added response ${promptIndex + 1}, total: ${this.getResponseCount()}`);
+    }
+
+    getResponseCount() {
+        return this.document.responses.length;
+    }
+
+    hasResponses() {
+        return this.getResponseCount() > 0;
+    }
+
+    finalizeDocument(summary) {
+        this.document.summary = summary;
+        this.saveDocumentState();
+    }
+
+    clearDocument() {
+        this.document = {
+            title: 'Perplexity AI Automation Results',
+            timestamp: null,
+            prompts: [],
+            responses: [],
+            summary: null,
+            totalPrompts: 0,
+            completedPrompts: 0
+        };
+        this.saveDocumentState();
+    }
+
+    // Export document data for popup
+    getDocumentData() {
+        return {
+            document: this.document,
+            responseCount: this.getResponseCount(),
+            hasResponses: this.hasResponses()
+        };
+    }
 }
 
 // Initialize the automation manager
