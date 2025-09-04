@@ -154,19 +154,22 @@ class PromptManager {
     }
 
     async editPrompt(index) {
-        const prompt = this.prompts[index];
-        if (!prompt) return;
+      // 1. Rename local variable so it doesn’t shadow window.prompt
+      const promptObj = this.prompts[index];
+      if (!promptObj) return;
 
-        const newText = prompt('Edit prompt:', prompt.text);
-        if (newText === null || newText.trim() === '') return;
+      // 2. Call window.prompt explicitly
+      const newText = window.prompt('Edit prompt:', promptObj.text);
+      if (newText === null || newText.trim() === '') return;
 
-        prompt.text = newText.trim();
-        prompt.modified = new Date().toISOString();
-
-        await this.savePrompts();
-        this.renderPrompts();
-        this.showNotification('Prompt updated successfully', 'success');
+      // 3. Update object and re-render
+      promptObj.text = newText.trim();
+      promptObj.modified = new Date().toISOString();
+      await this.savePrompts();
+      this.renderPrompts();
+      this.showNotification('Prompt updated successfully', 'success');
     }
+
 
     async deletePrompt(index) {
         if (!confirm('Are you sure you want to delete this prompt?')) return;
@@ -543,30 +546,66 @@ class PromptManager {
 
     // UI Rendering
     renderPrompts() {
-        this.updatePromptCount();
+      // 1. Update prompt counter
+      this.promptCount.textContent = this.prompts.length;
 
-        if (this.prompts.length === 0) {
-            this.promptsList.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-state-icon">📝</div>
-                    <h3>No prompts saved yet</h3>
-                    <p>Add your first prompt above to get started with automation.</p>
-                </div>
-            `;
-            return;
-        }
+      // 2. Clear existing list
+      this.promptsList.innerHTML = '';
 
-        const html = this.prompts.map((prompt, index) => this.createPromptItemHTML(prompt, index)).join('');
-        this.promptsList.innerHTML = html;
+      // 3. Handle empty state
+      if (this.prompts.length === 0) {
+        this.promptsList.innerHTML = `
+          <div class="empty-state">
+            <p>Add your first prompt above to get started with automation.</p>
+            <p>No automation activity yet. Start an automation to see logs here.</p>
+          </div>`;
+        return;
+      }
 
-        // Setup drag and drop for each item
-        document.querySelectorAll('.prompt-item').forEach((item, index) => {
-            this.setupDragAndDrop(item, index);
-            this.setupPromptItemEvents(item, index);
+      // 4. Generate each prompt item
+      this.prompts.forEach((promptObj, index) => {
+        // Create container
+        const item = document.createElement('div');
+        item.className = 'prompt-item';
+
+        // Header: drag-handle, number, preview
+        const header = document.createElement('div');
+        header.className = 'prompt-header';
+        header.innerHTML = `
+          <span class="drag-handle">⋮⋮</span>
+          <span class="prompt-number">${index + 1}.</span>
+          <span class="prompt-preview">${promptObj.text}</span>
+          <div class="prompt-actions">
+            <button class="btn btn-text btn-edit" title="Edit prompt">✏️</button>
+            <button class="btn btn-text btn-delete" title="Delete prompt">🗑️</button>
+          </div>`;
+        item.appendChild(header);
+
+        // Optional: Expanded content (hidden by default)
+        const content = document.createElement('div');
+        content.className = 'prompt-content';
+        content.innerHTML = `<div class="prompt-text">${promptObj.text}</div>`;
+        item.appendChild(content);
+
+        // 5. Bind action listeners
+        // Edit button
+        header.querySelector('.btn-edit').addEventListener('click', () => {
+          this.editPrompt(index);
         });
 
-        this.updateSelectionUI();
+        // Delete button
+        header.querySelector('.btn-delete').addEventListener('click', () => {
+          this.deletePrompt(index);
+        });
+
+        // 6. Setup drag-and-drop (existing method)
+        this.setupDragAndDrop(item, index);
+
+        // 7. Append to list
+        this.promptsList.appendChild(item);
+      });
     }
+
 
     createPromptItemHTML(prompt, index) {
         const isSelected = this.selectedPrompts.has(index);
