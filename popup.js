@@ -810,6 +810,216 @@ class DocumentManager {
         this.saveDocumentState();
     }
 
+    async downloadDocx() {
+        if (!this.hasResponses()) {
+            alert('No responses to download');
+            return;
+        }
+
+        try {
+            // Check if html-docx library is available
+            if (typeof htmlDocx === 'undefined') {
+                console.warn('html-docx library not found, falling back to plain text');
+                return this.downloadDocxPlainText();
+            }
+
+            // Build HTML document structure
+            const htmlContent = this.generateHTMLDocument();
+
+            // Convert HTML to DOCX using html-docx library
+            const docxBlob = htmlDocx.asBlob(htmlContent, {
+                orientation: 'portrait',
+                margins: {
+                    top: 720,    // 0.5 inch in twips (1440 twips = 1 inch)
+                    right: 720,
+                    bottom: 720,
+                    left: 720
+                }
+            });
+
+            // Download the file
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `perplexity-automation-${timestamp}.docx`;
+
+            const url = URL.createObjectURL(docxBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            console.log('HTML-formatted DOCX downloaded successfully:', filename);
+
+        } catch (error) {
+            console.error('Failed to generate HTML DOCX:', error);
+            console.log('Falling back to plain text method');
+            return this.downloadDocxPlainText();
+        }
+    }
+
+    /**
+     * NEW METHOD: Generate structured HTML document
+     * Add this new method to the DocumentManager class
+     */
+    generateHTMLDocument() {
+        const title = this.document.title;
+        const timestamp = new Date().toLocaleString();
+
+        let html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>${title}</title>
+            <style>
+                body {
+                    font-family: 'Aptos Display', 'Calibri', sans-serif;
+                    font-size: 11pt;
+                    line-height: 1.5;
+                    color: #000000;
+                }
+                .response-content {
+                    margin-bottom: 12pt;
+                }
+                p { margin-bottom: 6pt; }
+                ul, ol { margin-bottom: 12pt; }
+                li { margin-bottom: 3pt; }
+                strong, b { font-weight: bold; }
+                em, i { font-style: italic; }
+                code {
+                    font-family: 'Courier New', monospace;
+                    background-color: #f0f0f0;
+                    padding: 2px 4px;
+                }
+                pre {
+                    font-family: 'Courier New', monospace;
+                    background-color: #f0f0f0;
+                    padding: 12pt;
+                    margin: 12pt 0;
+                    white-space: pre-wrap;
+                }
+                blockquote {
+                    margin-left: 24pt;
+                    padding-left: 12pt;
+                    border-left: 3pt solid #cccccc;
+                    font-style: italic;
+                }
+            </style>
+        </head>
+        <body>
+            <h1 style="text-align: center; margin-bottom: 24pt;">${title}</h1>
+            <p style="text-align: center; font-style: italic; margin-bottom: 24pt;">Generated: ${timestamp}</p>
+        `;
+
+
+
+        // Add main content with HTML formatting - HEADERS AND PAGE BREAKS REMOVED
+            this.document.responses.forEach((response, index) => {
+                // Process the response text for HTML formatting
+                const processedResponse = this.processResponseText(response.responseText);
+                html += `<div class="response-content">${processedResponse}</div>`;
+            });
+
+        // Add summary if available
+        if (this.document.summary) {
+            html += `
+                <div class="page-break">
+                    <h1>Summary</h1>
+                    <p><strong>Total Prompts:</strong> ${this.document.summary.total || this.document.responses.length}</p>
+            `;
+
+            if (this.document.summary.successful !== undefined) {
+                html += `<p><strong>Successful:</strong> ${this.document.summary.successful}</p>`;
+            }
+
+            if (this.document.summary.successRate) {
+                html += `<p><strong>Success Rate:</strong> ${this.document.summary.successRate}%</p>`;
+            }
+
+            html += `</div>`;
+        }
+
+        html += `</body></html>`;
+        return html;
+    }
+
+    /**
+     * NEW METHOD: Process response text to preserve HTML formatting
+     * Add this new method to the DocumentManager class
+     */
+    processResponseText(responseText) {
+        if (!responseText) return '';
+
+        // If the response already contains HTML tags, return as-is
+        if (responseText.includes('<') && responseText.includes('>')) {
+            return responseText;
+        }
+
+        // Convert plain text to HTML with basic formatting
+        let processed = responseText
+            // Escape any existing HTML entities first
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+
+            // Convert markdown-style formatting to HTML
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // Bold
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')              // Italic
+            .replace(/`(.*?)`/g, '<code>$1</code>')            // Inline code
+
+            // Convert line breaks to paragraphs
+            .split('\n\n')
+            .map(paragraph => paragraph.trim())
+            .filter(paragraph => paragraph.length > 0)
+            .map(paragraph => {
+                // Handle lists
+                if (paragraph.includes('\n- ') || paragraph.includes('\n• ')) {
+                    const lines = paragraph.split('\n');
+                    let listHtml = '';
+                    let inList = false;
+
+                    for (const line of lines) {
+                        const trimmedLine = line.trim();
+                        if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('• ')) {
+                            if (!inList) {
+                                listHtml += '<ul>';
+                                inList = true;
+                            }
+                            listHtml += `<li>${trimmedLine.substring(2)}</li>`;
+                        } else if (trimmedLine.match(/^\d+\.\s/)) {
+                            if (!inList) {
+                                listHtml += '<ol>';
+                                inList = true;
+                            }
+                            listHtml += `<li>${trimmedLine.replace(/^\d+\.\s/, '')}</li>`;
+                        } else {
+                            if (inList) {
+                                listHtml += inList ? '</ul>' : '</ol>';
+                                inList = false;
+                            }
+                            if (trimmedLine) {
+                                listHtml += `<p>${trimmedLine}</p>`;
+                            }
+                        }
+                    }
+
+                    if (inList) {
+                        listHtml += '</ul>';
+                    }
+
+                    return listHtml;
+                }
+
+                // Regular paragraph
+                return `<p>${paragraph.replace(/\n/g, '<br>')}</p>`;
+            })
+            .join('');
+
+        return processed;
+    }
+
     /**
      * Generate and download DOCX with Microsoft Word formatting
      * Follows screenshot specifications:
@@ -817,7 +1027,7 @@ class DocumentManager {
      * - H1: Aptos Display, 20pt, Heading style
      * - H2: Aptos Display, 16pt, Strong style
      */
-    async downloadDocx() {
+    async downloadDocxPlainText() {
         if (!this.hasResponses()) {
             alert('No responses to download');
             return;

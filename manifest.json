@@ -49,6 +49,7 @@
     "popup.css",
     "popup.js",
     "lib/docx.min.js",
+    "lib/html-docx.js",
     "prompt-manager.html",
     "prompt-manager.css",
     "prompt-manager.js"

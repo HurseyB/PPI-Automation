@@ -199,19 +199,77 @@ class PerplexityAutomator {
         const nodes = Array.from(document.querySelectorAll(this.selectors.responseContainers.join(',')));
         const node = nodes.reverse().find(n => !initial.has(n) && this.isVisible(n));
         if (node) {
-          const txt = node.innerText.trim();
-          if (txt.length === lastLen) {
-            if (++stable >= 3) return resolve({ responseText: txt, startTime: start });
-          } else {
-            lastLen = txt.length;
-            stable = 0;
+          // CHANGED: Extract HTML content instead of plain text
+              const htmlContent = this.extractHTMLContent(node);
+              const textLength = node.innerText.trim().length;
+
+              if (textLength === lastLen) {
+                  if (++stable >= 3) {
+                      return resolve({
+                          responseText: htmlContent,  // Return HTML instead of plain text
+                          startTime: start
+                      });
+                  }
+              } else {
+                  lastLen = textLength;
+                  stable = 0;
+              }
           }
-        }
-        if (Date.now() - start > timeout) return resolve({ responseText: '', error: `AI response timeout after ${timeout/1000}s` });
-        setTimeout(check, 1000);
+
+          if (Date.now() - start > timeout) {
+              return resolve({
+                  responseText: '',
+                  error: `AI response timeout after ${timeout/1000}s`
+              });
+          }
+          setTimeout(check, 1000);
       };
       check();
     });
+  }
+
+  // NEW METHOD: Add this method to extract HTML content
+  extractHTMLContent(node) {
+      // Clone the node to avoid modifying the original
+      const clonedNode = node.cloneNode(true);
+
+      // Remove unwanted elements (buttons, navigation, etc.)
+      const unwantedSelectors = [
+          'button',
+          'nav',
+          '.navigation',
+          '.btn',
+          '[role="button"]',
+          '.copy-button',
+          '.share-button'
+      ];
+
+      unwantedSelectors.forEach(selector => {
+          const elements = clonedNode.querySelectorAll(selector);
+          elements.forEach(el => el.remove());
+      });
+
+      // Get the HTML content
+      let htmlContent = clonedNode.innerHTML;
+
+      // Clean up the HTML - remove unnecessary attributes but keep structure
+      htmlContent = htmlContent
+          .replace(/class="[^"]*"/g, '')          // Remove class attributes
+          .replace(/id="[^"]*"/g, '')            // Remove id attributes
+          .replace(/data-[^=]*="[^"]*"/g, '')    // Remove data attributes
+          .replace(/style="[^"]*"/g, '')         // Remove inline styles
+          .replace(/\s+>/g, '>')                 // Clean up spacing
+          .replace(/>\s+</g, '><')               // Clean up spacing
+          .trim();
+
+      // If no meaningful HTML structure found, fall back to plain text
+      if (!htmlContent.includes('<p') && !htmlContent.includes('<div') &&
+          !htmlContent.includes('<h') && !htmlContent.includes('<ul') &&
+          !htmlContent.includes('<ol')) {
+          return node.innerText.trim();
+      }
+
+      return htmlContent;
   }
 
   sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
