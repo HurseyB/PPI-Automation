@@ -913,6 +913,12 @@ class DocumentManager {
             <p style="text-align: center; font-style: italic; margin-bottom: 24pt;">Generated: ${timestamp}</p>
         `;
 
+        html += `
+            <!-- First page break -->
+            <br clear="all" style="page-break-before: always" />
+            <!-- Second page break -->
+            <br clear="all" style="page-break-before: always" />
+        `;
 
 
         // Add main content with HTML formatting - HEADERS AND PAGE BREAKS REMOVED
