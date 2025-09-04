@@ -135,6 +135,18 @@ class AutomationManager {
           const isPerplexity = await this.checkPerplexityTab(message.tabId);
           sendResponse({ isPerplexity });
           break;
+        case 'update-notification-settings':
+          await this.updateNotificationSettings(message.settings);
+          sendResponse({ success: true });
+          break;
+        case 'show-notification':
+          await this.handleShowNotification(message.data);
+          sendResponse({ success: true });
+          break;
+        case 'request-notification-permission':
+          const permissionGranted = await this.ensureNotificationPermission();
+          sendResponse({ success: permissionGranted });
+          break;
         default:
           this.logError('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -533,6 +545,7 @@ class AutomationManager {
       summary: summary,
       automationId: this.automationId
     });
+    await this.showCompletionNotification(summary);
   }
 
   generateAutomationSummary() {
@@ -552,6 +565,122 @@ class AutomationManager {
       responseRate: total > 0 ? (withResponses / total * 100).toFixed(1) : 0,
       duration: Date.now() - this.automationId
     };
+  }
+
+  async showCompletionNotification(summary) {
+    try {
+      // Check if user has enabled notifications
+      const notificationSettings = await this.getNotificationSettings();
+      if (!notificationSettings.enabled) {
+        this.log('Notifications disabled by user');
+        return;
+      }
+
+      // Request notification permission if needed
+      const hasPermission = await this.ensureNotificationPermission();
+      if (!hasPermission) {
+        this.log('Notification permission not granted');
+        return;
+      }
+
+      // Create enhanced notification
+      const notificationId = await browser.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon-48.png',
+        title: 'Perplexity AI Automator - Complete!',
+        message: `✅ Processed ${summary.successful}/${summary.total} prompts successfully (${summary.successRate}% success rate)`,
+        contextMessage: `${summary.withResponses} responses collected • Completed in ${this.formatDuration(summary.duration)}`,
+        priority: 1,
+        requireInteraction: false
+      });
+
+      // Set up notification click handler
+      this.setupNotificationClickHandler(notificationId);
+
+      this.log('Completion notification shown:', notificationId);
+
+    } catch (error) {
+      this.logError('Failed to show completion notification:', error);
+      // Fallback: try simple notification
+      try {
+        await browser.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon-48.png',
+          title: 'Automation Complete',
+          message: `Processed ${this.processedResults.length}/${this.prompts.length} prompts`
+        });
+      } catch (fallbackError) {
+        this.logError('Fallback notification also failed:', fallbackError);
+      }
+    }
+  }
+
+  async getNotificationSettings() {
+    try {
+      const result = await browser.storage.local.get(['notificationSettings']);
+      return result.notificationSettings || { enabled: true };
+    } catch (error) {
+      this.logError('Failed to get notification settings:', error);
+      return { enabled: true }; // Default to enabled
+    }
+  }
+
+  async ensureNotificationPermission() {
+      try {
+          // Extension notifications don't require user permission
+          // They're granted automatically with the "notifications" permission in manifest.json
+          if (typeof browser.notifications === 'undefined') {
+              this.log('Notifications API not available');
+              return false;
+          }
+
+          this.log('Extension notifications available');
+          return true;
+      } catch (error) {
+          this.logError('Error checking notification availability:', error);
+          return false;
+      }
+  }
+
+
+  setupNotificationClickHandler(notificationId) {
+    // Handle notification click to focus on extension
+    const clickHandler = (clickedNotificationId) => {
+      if (clickedNotificationId === notificationId) {
+        this.handleNotificationClick();
+        browser.notifications.onClicked.removeListener(clickHandler);
+      }
+    };
+
+    browser.notifications.onClicked.addListener(clickHandler);
+
+    // Auto-clear notification after 10 seconds
+    setTimeout(() => {
+      browser.notifications.clear(notificationId).catch(() => {});
+    }, 10000);
+  }
+
+  async handleNotificationClick() {
+    try {
+      // Try to focus on the automation tab
+      if (this.currentTabId) {
+        await browser.tabs.update(this.currentTabId, { active: true });
+        const window = await browser.tabs.get(this.currentTabId);
+        await browser.windows.update(window.windowId, { focused: true });
+      }
+    } catch (error) {
+      this.log('Could not focus automation tab on notification click');
+    }
+  }
+
+  formatDuration(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
   }
 
   async saveFinalResults() {
@@ -769,6 +898,56 @@ class AutomationManager {
     await this.saveSettings();
     this.log('Settings updated:', this.settings);
   }
+
+  async updateNotificationSettings(settings) {
+    try {
+      await browser.storage.local.set({ notificationSettings: settings });
+      this.log('Notification settings updated:', settings);
+    } catch (error) {
+      this.logError('Failed to update notification settings:', error);
+    }
+  }
+
+  async handleShowNotification(data) {
+    try {
+      // Check if user has enabled notifications
+      const notificationSettings = await this.getNotificationSettings();
+      if (!notificationSettings.enabled) {
+        this.log('Notifications disabled by user');
+        return;
+      }
+
+      // Request notification permission if needed
+      const hasPermission = await this.ensureNotificationPermission();
+      if (!hasPermission) {
+        this.log('Notification permission not granted');
+        return;
+      }
+
+      // Create the notification
+      const notificationId = await browser.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon-48.png',
+        title: data.title || 'Perplexity AI Automator',
+        message: data.message,
+        priority: data.notificationType === 'error' ? 2 : 1,
+        requireInteraction: data.notificationType === 'error'
+      });
+
+      this.log('Notification shown:', notificationId);
+
+      // Auto-clear notification after delay (except for errors)
+      if (data.notificationType !== 'error') {
+        setTimeout(() => {
+          browser.notifications.clear(notificationId).catch(() => {});
+        }, 5000);
+      }
+
+    } catch (error) {
+      this.logError('Failed to show notification:', error);
+    }
+  }
+
 
   async sendMessageToPopup(type, data) {
     try {

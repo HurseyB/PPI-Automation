@@ -8,6 +8,8 @@
     "activeTab",
     "storage",
     "downloads",
+    "notifications",
+    "nativeMessaging",
     "https://www.perplexity.ai/*"
   ],
   

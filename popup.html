@@ -47,6 +47,17 @@
                         <p>No prompts saved yet. Add your first prompt above.</p>
                     </div>
                 </div>
+                <div class="settings-section">
+                    <div class="section-header">
+                        <h2>Settings</h2>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <input type="checkbox" id="enableNotifications" class="setting-checkbox">
+                            <span>Enable completion notifications</span>
+                        </label>
+                    </div>
+                </div>
             </section>
 
             <!-- Document Management Section - NEW -->
@@ -74,12 +85,20 @@
             </section>
 
             <section class="automation-section">
-                <button id="startAutomationBtn" class="btn btn-success" disabled>
-                    <span class="btn-icon">▶</span>
+                <button id="startAutomationBtn" class="btn btn-success">
+                    <span class="btn-icon">▶️</span>
                     Start Automation
                 </button>
-                <button id="stopAutomationBtn" class="btn btn-danger" style="display: none;">
-                    <span class="btn-icon">⏹</span>
+                <button id="pauseAutomationBtn" class="btn btn-secondary" disabled style="display: none;">
+                    <span class="btn-icon">⏸️</span>
+                    Pause Automation
+                </button>
+                <button id="resumeAutomationBtn" class="btn btn-primary" disabled style="display: none;">
+                    <span class="btn-icon">▶️</span>
+                    Resume Automation
+                </button>
+                <button id="stopAutomationBtn" class="btn btn-danger" disabled>
+                    <span class="btn-icon">⏹️</span>
                     Stop Automation
                 </button>
             </section>

@@ -5,8 +5,18 @@
 
 class PerplexityAutomator {
     async saveUIState(state) {
-      // state: { current, total, percentage, currentPromptText, responseCount, documentStatus }
-      await browser.storage.local.set({ popupUIState: state });
+        // state: { current, total, percentage, currentPromptText, responseCount, documentStatus, isPaused }
+        const uiState = {
+            ...state,
+            // NEW: Save document data
+            documentData: {
+                document: this.documentManager.document,
+                timestamp: Date.now()
+            },
+            // NEW: Save log messages
+            logMessages: this.automationLog ? this.automationLog.innerHTML : ''
+        };
+        await browser.storage.local.set({ popupUIState: uiState });
     }
 
     async loadUIState() {
@@ -20,30 +30,54 @@ class PerplexityAutomator {
         this.collapsedAll = false;
         this.documentManager = new DocumentManager(); // NEW: Document management
         this.initializeElements();
+        this.initializeNotificationSettings();
         this.bindEventListeners();
         this.loadPrompts();
         this.loadUIState().then(state => {
-          if (!state) return;
-          // Show progress if there's ongoing automation
-          if (state.total > 0) {
-            this.showProgressSection();
-            // Reconstruct progress bar
-            this.progressText.textContent = `${state.current} of ${state.total} completed`;
-            this.progressFill.style.width = `${state.percentage}%`;
-            this.currentPrompt.textContent = state.currentPromptText;
-            // Restore document status and count
-            this.responseCount.textContent = state.responseCount;
-            this.documentStatus.textContent = state.documentStatus;
-            // Set status class
-            const cls = state.documentStatus === 'Document ready for download'
-              ? 'status status--success'
-              : state.documentStatus === 'collecting'
-                ? 'status status--info'
-                : 'status status--partial';
-            this.documentStatus.className = cls;
-            // Enable download buttons if responses exist
-            if (state.responseCount > 0) this.enableDownloadButtons();
-          }
+            if (!state) return;
+
+            // Restore document data FIRST if it exists
+            if (state.documentData && state.documentData.document) {
+                // Restore the entire document state
+                this.documentManager.document = state.documentData.document;
+                console.log('Document data restored:', this.documentManager.getResponseCount(), 'responses');
+            }
+
+            // Show progress if there's ongoing automation
+            // Show progress if there's ongoing automation
+            if (state.total > 0) {
+                this.showProgressSection();
+
+                // Reconstruct progress bar
+                this.progressText.textContent = `${state.current} of ${state.total} completed`;
+                this.progressFill.style.width = `${state.percentage}%`;
+                this.currentPrompt.textContent = state.currentPromptText;
+
+                // Restore document status and count
+                this.responseCount.textContent = state.responseCount;
+                this.documentStatus.textContent = state.documentStatus;
+
+                // Set status class
+                const cls = state.documentStatus === 'Document ready for download' ? 'status status--success' :
+                            state.documentStatus === 'collecting' ? 'status status--info' :
+                            'status status--partial';
+                this.documentStatus.className = cls;
+
+                // NEW: Restore log messages if they exist
+                if (state.logMessages && this.automationLog) {
+                    this.automationLog.innerHTML = state.logMessages;
+                }
+
+                // Enable download buttons if responses exist
+                if (state.responseCount > 0) {
+                    // Ensure DOM is ready before enabling buttons
+                    setTimeout(() => this.enableDownloadButtons(), 100);
+                }
+            }
+
+            // NEW: Update button states based on current automation status
+            setTimeout(() => this.updateAutomationButton(), 200);
+
         });
         this.setupMessageListener();
     }
@@ -68,6 +102,8 @@ class PerplexityAutomator {
 
         // Automation elements
         this.startAutomationBtn = document.getElementById('startAutomationBtn');
+        this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
+        this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
         this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
 
         // Progress elements
@@ -77,6 +113,68 @@ class PerplexityAutomator {
         this.currentPrompt = document.getElementById('currentPrompt');
         this.automationLog = document.getElementById('automationLog');
     }
+
+    initializeNotificationSettings() {
+      // Initialize notification elements
+      this.enableNotifications = document.getElementById('enableNotifications');
+
+      // Load notification settings
+      this.loadNotificationSettings();
+    }
+
+    async loadNotificationSettings() {
+      try {
+        const result = await browser.storage.local.get(['notificationSettings']);
+        const settings = result.notificationSettings || { enabled: true };
+
+        if (this.enableNotifications) {
+          this.enableNotifications.checked = settings.enabled;
+        }
+      } catch (error) {
+        console.error('Failed to load notification settings:', error);
+      }
+    }
+
+    async saveNotificationSettings() {
+      try {
+        const settings = {
+          enabled: this.enableNotifications ? this.enableNotifications.checked : true
+        };
+
+        await browser.storage.local.set({ notificationSettings: settings });
+
+        // Send updated settings to background script
+        browser.runtime.sendMessage({
+          type: 'update-notification-settings',
+          settings: settings
+        });
+
+        // If user just enabled notifications, request permission
+        if (settings.enabled) {
+          await this.requestNotificationPermission();
+        }
+      } catch (error) {
+        console.error('Failed to save notification settings:', error);
+      }
+    }
+
+    async requestNotificationPermission() {
+        try {
+            // Extension notifications are automatically available with manifest permission
+            // Just test if the API is available
+            const response = await browser.runtime.sendMessage({
+                type: 'request-notification-permission'
+            });
+            if (response.success) {
+                this.showNotification('Notifications are ready!', 'success');
+            } else {
+                console.log('Notification API not available');
+            }
+        } catch (error) {
+            console.error('Failed to check notification availability:', error);
+        }
+    }
+
 
     bindEventListeners() {
         // Input events
@@ -97,11 +195,19 @@ class PerplexityAutomator {
         this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
         // Automation controls
+        // Automation controls
         this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
+        this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
+        this.resumeAutomationBtn.addEventListener('click', () => this.resumeAutomation());
         this.stopAutomationBtn.addEventListener('click', () => this.stopAutomation());
 
         // Input validation
         this.promptInput.addEventListener('input', () => this.validateInput());
+
+        // Notification settings
+        if (this.enableNotifications) {
+          this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
+        }
     }
 
     setupMessageListener() {
@@ -123,6 +229,12 @@ class PerplexityAutomator {
                     case 'automation-error':
                         this.handleAutomationError(message.data);
                         break;
+                    case 'automation-paused':
+                        this.handleAutomationPaused(message.data);
+                        break;
+                    case 'automation-resumed':
+                        this.handleAutomationResumed(message.data);
+                        break;
                     case 'document-updated': // NEW: Handle document updates
                         this.handleDocumentUpdated(message.data);
                         break;
@@ -140,7 +252,10 @@ class PerplexityAutomator {
         this.progressText.textContent = '0 of ' + data.total + ' completed';
         this.progressFill.style.width = '0%';
         this.currentPrompt.textContent = 'Starting automation...';
-        this.clearLog();
+        // Only clear log if this is a truly new automation (not a restoration)
+        if (!this.automationLog.innerHTML.includes('Automation started')) {
+            this.clearLog();
+        }
         this.logMessage('Automation started with ' + data.total + ' prompts');
         
         // NEW: Initialize document for new automation
@@ -245,6 +360,41 @@ class PerplexityAutomator {
         this.showNotification('Automation error: ' + (data.error || 'Unknown error'), 'error');
     }
 
+    handleAutomationPaused(data) {
+        this.currentPrompt.textContent = 'Automation paused';
+        this.logMessage(`⏸️ Automation paused at prompt ${data.currentIndex + 1}/${data.total}`);
+        this.updateAutomationButton(); // This will show/hide correct buttons based on state
+
+        // Save paused state
+        this.saveUIState({
+            current: data.currentIndex,
+            total: data.total,
+            percentage: Math.round((data.currentIndex / data.total) * 100),
+            currentPromptText: this.currentPrompt.textContent,
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus.textContent,
+            isPaused: true
+        });
+    }
+
+    handleAutomationResumed(data) {
+        this.currentPrompt.textContent = `Resuming automation...`;
+        this.logMessage(`▶️ Automation resumed from prompt ${data.currentIndex + 1}/${data.total}`);
+        this.updateAutomationButton();
+
+        // Save resumed state
+        this.saveUIState({
+            current: data.currentIndex,
+            total: data.total,
+            percentage: Math.round((data.currentIndex / data.total) * 100),
+            currentPromptText: this.currentPrompt.textContent,
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus.textContent,
+            isPaused: false
+        });
+    }
+
+
     // NEW: Handle document update notifications
     handleDocumentUpdated(data) {
         this.updateResponseCount();
@@ -269,8 +419,10 @@ class PerplexityAutomator {
 
     enableDownloadButtons() {
         if (this.documentManager.hasResponses()) {
-            //this.downloadTxtBtn.disabled = false;
             this.downloadDocxBtn.disabled = false;
+            console.log('Download buttons enabled -', this.documentManager.getResponseCount(), 'responses available');
+        } else {
+            console.log('Download buttons NOT enabled - no responses available');
         }
     }
 
@@ -310,17 +462,63 @@ class PerplexityAutomator {
     }
 
     showNotification(message, type = 'info') {
-        // Simple notification - could be enhanced with proper UI notifications
+      // Send notification request to background script
+      try {
+        browser.runtime.sendMessage({
+          type: 'show-notification',
+          data: {
+            message: message,
+            notificationType: type,
+            title: 'Perplexity AI Automator'
+          }
+        }).catch(error => {
+          // Fallback to console if messaging fails
+          console.log(`[${type.toUpperCase()}] ${message}`);
+        });
+      } catch (error) {
+        // Fallback to console if notifications fail
         console.log(`[${type.toUpperCase()}] ${message}`);
+      }
     }
 
-    updateAutomationButton() {
-        if (this.isRunning) {
-            this.startAutomationBtn.style.display = 'none';
-            this.stopAutomationBtn.style.display = 'block';
-        } else {
-            this.startAutomationBtn.style.display = 'block';
-            this.stopAutomationBtn.style.display = 'none';
+    async updateAutomationButton() {
+        try {
+            // Get current automation status from background
+            const response = await browser.runtime.sendMessage({
+                type: 'get-automation-status'
+            });
+
+            const status = response || {};
+
+            if (status.isRunning) {
+                this.startAutomationBtn.disabled = true;
+                this.stopAutomationBtn.disabled = false;
+
+                if (status.isPaused) {
+                    // Show resume, hide pause
+                    this.pauseAutomationBtn.style.display = 'none';
+                    this.resumeAutomationBtn.style.display = 'inline-flex';
+                    this.resumeAutomationBtn.disabled = false;
+                } else {
+                    // Show pause, hide resume
+                    this.pauseAutomationBtn.style.display = 'inline-flex';
+                    this.pauseAutomationBtn.disabled = false;
+                    this.resumeAutomationBtn.style.display = 'none';
+                }
+            } else {
+                // Not running - show only start button
+                this.startAutomationBtn.disabled = false;
+                this.stopAutomationBtn.disabled = true;
+                this.pauseAutomationBtn.style.display = 'none';
+                this.resumeAutomationBtn.style.display = 'none';
+            }
+        } catch (error) {
+            this.logError('Failed to update button states:', error);
+            // Fallback to basic state if status check fails
+            this.startAutomationBtn.disabled = this.isRunning;
+            this.stopAutomationBtn.disabled = !this.isRunning;
+            this.pauseAutomationBtn.style.display = 'none';
+            this.resumeAutomationBtn.style.display = 'none';
         }
     }
 
@@ -409,6 +607,40 @@ class PerplexityAutomator {
             await browser.runtime.sendMessage({ type: 'stop-automation' });
         } catch (error) {
             this.logError('Failed to stop automation:', error);
+        }
+    }
+
+    async pauseAutomation() {
+        try {
+            const response = await browser.runtime.sendMessage({
+                type: 'pause-automation'
+            });
+
+            if (response.success) {
+                this.showNotification('Automation paused', 'info');
+            } else {
+                this.showNotification('Failed to pause automation', 'error');
+            }
+        } catch (error) {
+            this.logError('Failed to pause automation:', error);
+            this.showNotification('Error pausing automation', 'error');
+        }
+    }
+
+    async resumeAutomation() {
+        try {
+            const response = await browser.runtime.sendMessage({
+                type: 'resume-automation'
+            });
+
+            if (response.success) {
+                this.showNotification('Automation resumed', 'info');
+            } else {
+                this.showNotification('Failed to resume automation', 'error');
+            }
+        } catch (error) {
+            this.logError('Failed to resume automation:', error);
+            this.showNotification('Error resuming automation', 'error');
         }
     }
 

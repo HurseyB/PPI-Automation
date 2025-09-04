@@ -1229,4 +1229,47 @@ body {
         padding: var(--space-8);
     }
 }
+
+/* Settings Section */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.setting-item {
+  display: flex;
+  align-items: center;
+  padding: var(--space-8) 0;
+}
+
+.setting-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.setting-checkbox {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-standard);
+}
+
+.setting-checkbox:checked {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.setting-checkbox:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: 2px;
+}
 ```
