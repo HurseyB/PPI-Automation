@@ -32,7 +32,6 @@ class PerplexityAutomator {
         this.initializeElements();
         this.initializeNotificationSettings();
         this.bindEventListeners();
-        this.setupPromptListEventHandlers();
         this.loadPrompts();
     // ADDED: Load document manager state first
         // ENHANCED: Load document manager state with background sync
@@ -140,6 +139,16 @@ class PerplexityAutomator {
       this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
       this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
       this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
+
+      // Progress elements (these don't exist in popup, but needed for compatibility)
+      this.progressText = null;
+      this.progressFill = null;
+      this.currentPrompt = null;
+      this.automationLog = null;
+
+      // Initialize notification elements
+      this.enableNotifications = document.getElementById('enableNotifications');
+
     }
 
 
@@ -266,33 +275,31 @@ class PerplexityAutomator {
         this.isRunning = true;
         this.showProgressSection();
         this.updateAutomationButton();
-        this.progressText.textContent = '0 of ' + data.total + ' completed';
-        this.progressFill.style.width = '0%';
-        this.currentPrompt.textContent = 'Starting automation...';
-        // Only clear log if this is a truly new automation (not a restoration)
-        if (!this.automationLog.innerHTML.includes('Automation started')) {
-            this.clearLog();
-        }
+
+        // Show progress info using document status
+        this.updateDocumentStatus('collecting', `Automation started: 0 of ${data.total} completed`);
+
+        // Log for debugging
         this.logMessage('Automation started with ' + data.total + ' prompts');
-        
-        // NEW: Document initialization handled by background script
-        this.updateDocumentStatus('collecting', 'Collecting responses...');
+
+        // Show notification to user
+        this.showNotification(`Automation started with ${data.total} prompts`, 'success');
     }
+
 
     handleProgressUpdate(data) {
         const current = data.current;
         const total = data.total;
 
-        this.progressText.textContent = `${current} of ${total} completed`;
+        // Update document status to show progress
         const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
-        this.progressFill.style.width = `${percentage}%`;
-
         if (data.status === 'processing' && data.prompt) {
-            this.currentPrompt.textContent = `Processing: ${data.prompt.substring(0, 50)}...`;
+            this.updateDocumentStatus('collecting', `Processing ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
             this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
         } else if (data.status === 'completed') {
-            this.currentPrompt.textContent = `Completed prompt ${current}/${total}`;
+            this.updateDocumentStatus('collecting', `Completed ${current}/${total} (${percentage}%)`);
             this.logMessage(`✓ Prompt ${current} completed successfully`);
+
 
             // NEW: Response collection handled by background script, just update UI
             if (data.response && data.prompt) {
@@ -459,6 +466,28 @@ class PerplexityAutomator {
         }
     }
 
+    // Progress section methods (compatibility for popup-only interface)
+    showProgressSection() {
+        // Show automation control buttons
+        this.pauseAutomationBtn.style.display = 'none';
+        this.resumeAutomationBtn.style.display = 'none';
+        this.stopAutomationBtn.style.display = 'none';
+
+        // Update button states
+        this.updateAutomationButton();
+    }
+
+    clearLog() {
+        // Compatibility method - log is in prompt manager
+        console.log('Log cleared (popup interface)');
+    }
+
+    logMessage(message) {
+        // Compatibility method - log is in prompt manager
+        console.log(`[Automation] ${message}`);
+    }
+
+
     logError(message, error) {
         console.error(`[Perplexity Automator] ${message}`, error);
         this.logMessage(`❌ ${message}: ${error}`);
@@ -528,24 +557,6 @@ class PerplexityAutomator {
         }
     }
 
-    toggleAllPrompts() {
-        this.collapsedAll = !this.collapsedAll;
-        const items = document.querySelectorAll('.prompt-item');
-        
-        items.forEach(item => {
-            const content = item.querySelector('.prompt-content');
-            if (content) {
-                if (this.collapsedAll) {
-                    content.classList.remove('expanded');
-                } else {
-                    content.classList.add('expanded');
-                }
-            }
-        });
-
-        this.toggleViewBtn.textContent = this.collapsedAll ? 'Expand All' : 'Collapse All';
-    }
-
     openPromptManager() {
         // Open the prompt manager in a new tab
         const url = browser.runtime.getURL('prompt-manager.html');
@@ -574,6 +585,8 @@ class PerplexityAutomator {
                 prompts: this.prompts,
                 tabId: tab.id
             });
+
+            this.updateAutomationButton();
             
         } catch (error) {
             this.logError('Failed to start automation:', error);
@@ -624,27 +637,14 @@ class PerplexityAutomator {
     }
 
     renderPrompts() {
-        if (this.prompts.length === 0) {
-            this.promptsList.innerHTML = '<div class="empty-state"><p>No prompts saved yet. Add your first prompt above.</p></div>';
-            return;
-        }
+      // Update prompt count
+      this.updatePromptCount();
 
-        this.promptsList.innerHTML = this.prompts.map((prompt, index) => `
-            <div class="prompt-item">
-                <div class="prompt-header" onclick="this.parentElement.querySelector('.prompt-content').classList.toggle('expanded')">
-                    <span class="prompt-number">#{index + 1}</span>
-                    <span class="prompt-preview">${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}</span>
-                    <div class="prompt-actions" onclick="event.stopPropagation()">
-                        <button class="btn btn-edit" data-action="edit" data-index="${index}" title="Edit" ${this.isRunning ? 'disabled' : ''}>✏️</button>
-                        <button class="btn btn-delete" data-action="delete" data-index="${index}" title="Delete" ${this.isRunning ? 'disabled' : ''}>🗑️</button>
-                    </div>
-                </div>
-                <div class="prompt-content">
-                    <div class="prompt-text">${prompt}</div>
-                </div>
-            </div>
-        `).join('');
+      // In simplified popup, we don't show the prompt list
+      // The prompts are managed in the separate prompt manager page
+      // This method is kept minimal to avoid errors
     }
+
 
     async editPrompt(index) {
         // Prevent editing during automation
@@ -677,8 +677,12 @@ class PerplexityAutomator {
         }
     }
 
+    // Update prompt count display
     updatePromptCount() {
-        this.promptCount.textContent = this.prompts.length;
+      const count = this.prompts.length;
+      if (this.promptCount) {
+        this.promptCount.textContent = count;
+      }
     }
 
     updateStartButton() {
@@ -694,17 +698,15 @@ class PerplexityAutomator {
     }
 
     async loadPrompts() {
-        try {
-            const result = await browser.storage.local.get(['prompts']);
-            this.prompts = result.prompts || [];
-            this.renderPrompts();
-            this.updatePromptCount();
-            this.updateStartButton();
-            this.validateInput();
-        } catch (error) {
-            this.logError('Failed to load prompts:', error);
-        }
+      try {
+        const result = await browser.storage.local.get(['prompts']);
+        this.prompts = result.prompts || [];
+        this.updatePromptCount(); // Update the display counter
+      } catch (error) {
+        this.logError('Failed to load prompts:', error);
+      }
     }
+
 }
 
 // NEW: Document Management Class
