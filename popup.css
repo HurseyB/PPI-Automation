@@ -979,6 +979,12 @@ body {
     color: var(--color-text);
 }
 
+.section-actions {
+    display: flex;
+    gap: var(--space-8);
+    align-items: center;
+}
+
 .prompts-list {
     max-height: 200px;
     overflow-y: auto;

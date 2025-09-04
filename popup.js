@@ -134,6 +134,7 @@ class PerplexityAutomator {
         this.promptsList = document.getElementById('promptsList');
         this.promptCount = document.getElementById('promptCount');
         this.toggleViewBtn = document.getElementById('toggleViewBtn');
+        this.openPromptManagerBtn = document.getElementById('openPromptManagerBtn');
 
         // Document management elements - NEW
         //this.downloadTxtBtn = document.getElementById('downloadTxtBtn'); // -- This is unused, and removed from html. Keeping comment for my records.
@@ -230,6 +231,12 @@ class PerplexityAutomator {
 
         // View toggle
         this.toggleViewBtn.addEventListener('click', () => this.toggleAllPrompts());
+
+        // Open prompt manager
+        if (this.openPromptManagerBtn) {
+            this.openPromptManagerBtn.addEventListener('click', () => this.openPromptManager());
+        }
+
 
         // Document management events - NEW
         //this.downloadTxtBtn.addEventListener('click', () => this.documentManager.downloadTxt()); // -- This is unused, and removed from html. Keeping comment for my records.
@@ -651,6 +658,15 @@ class PerplexityAutomator {
         this.toggleViewBtn.textContent = this.collapsedAll ? 'Expand All' : 'Collapse All';
     }
 
+    openPromptManager() {
+        // Open the prompt manager in a new tab
+        const url = browser.runtime.getURL('prompt-manager.html');
+        browser.tabs.create({ url: url }).catch(error => {
+            console.error('Failed to open prompt manager:', error);
+            this.showNotification('Failed to open prompt manager', 'error');
+        });
+    }
+
     async startAutomation() {
         if (this.prompts.length === 0) {
             this.showNotification('No prompts to run', 'warning');
@@ -980,13 +996,19 @@ class DocumentManager {
                 })
             );
 
-            // Index entries
+            // Index entries - Clean business document style
             this.document.responses.forEach((response, index) => {
+                const pageNumber = index + 2; // Start from page 2 (after title page)
                 sections.push(
                     new Paragraph({
                         children: [
                             new TextRun({
-                                text: `${response.promptNumber}. ${response.promptText.substring(0, 80)}${response.promptText.length > 80 ? '...' : ''}`,
+                                text: `Question ${response.promptNumber}`,
+                                font: "Times New Roman",
+                                size: 24 // 12pt
+                            }),
+                            new TextRun({
+                                text: `${'.'.repeat(Math.max(1, 50 - `Question ${response.promptNumber}`.length))} ${pageNumber}`,
                                 font: "Times New Roman",
                                 size: 24 // 12pt
                             })
@@ -1019,21 +1041,6 @@ class DocumentManager {
                         ],
                         heading: HeadingLevel.HEADING_1,
                         spacing: { before: 600, after: 200 }
-                    })
-                );
-
-                // Prompt text
-                sections.push(
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: response.promptText,
-                                font: "Aptos Display",
-                                size: 24, // 12pt
-                                italics: true
-                            })
-                        ],
-                        spacing: { after: 300 }
                     })
                 );
 

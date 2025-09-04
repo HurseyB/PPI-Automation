@@ -48,7 +48,10 @@
     "popup.html",
     "popup.css",
     "popup.js",
-    "lib/docx.min.js"
+    "lib/docx.min.js",
+    "prompt-manager.html",
+    "prompt-manager.css",
+    "prompt-manager.js"
   ],
   
   "author": "Developer",

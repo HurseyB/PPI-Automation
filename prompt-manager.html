@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt Manager - Perplexity AI Automator</title>
+    <link rel="stylesheet" href="popup.css">
+    <link rel="stylesheet" href="prompt-manager.css">
+</head>
+<body>
+<div class="page-container">
+    <!-- Header Section -->
+    <header class="page-header">
+        <div class="header-content">
+            <h1 class="page-title">Prompt Manager</h1>
+            <div class="header-actions">
+                <button id="importBtn" class="btn btn-secondary">
+                    <span class="btn-icon">📥</span>
+                    Import
+                </button>
+                <button id="exportBtn" class="btn btn-secondary">
+                    <span class="btn-icon">📤</span>
+                    Export
+                </button>
+                <button id="backToPopupBtn" class="btn btn-outline">
+                    <span class="btn-icon">←</span>
+                    Back to Automator
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Add New Prompt Section -->
+        <section class="add-prompt-section card">
+            <div class="card__body">
+                <div class="form-group">
+                    <label for="promptInput" class="form-label">Add New Prompt</label>
+                    <textarea
+                            id="promptInput"
+                            class="form-control prompt-input"
+                            placeholder="Enter your prompt here... (Ctrl+Enter to add quickly)"
+                            rows="4"
+                    ></textarea>
+                </div>
+                <div class="input-actions">
+                    <button id="addPromptBtn" class="btn btn-primary" disabled>
+                        <span class="btn-icon">+</span>
+                        Add Prompt
+                    </button>
+                    <button id="clearInputBtn" class="btn btn-secondary">
+                        <span class="btn-icon">🗑️</span>
+                        Clear
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Prompts Management Section -->
+        <section class="prompts-management-section">
+            <div class="section-header">
+                <div class="section-title-group">
+                    <h2>Saved Prompts</h2>
+                    <span id="promptCount" class="prompt-counter">0 prompts</span>
+                </div>
+                <div class="section-actions">
+                    <button id="selectAllBtn" class="btn btn-text">Select All</button>
+                    <button id="clearSelectedBtn" class="btn btn-text" disabled>Clear Selected</button>
+                    <button id="clearAllBtn" class="btn btn-danger">
+                        <span class="btn-icon">🗑️</span>
+                        Clear All
+                    </button>
+                </div>
+            </div>
+
+            <!-- Drag and Drop Instructions -->
+            <div class="drag-instructions">
+                <p>💡 <strong>Tip:</strong> Drag and drop prompts to reorder them. Use checkboxes for bulk actions.</p>
+            </div>
+
+            <!-- Prompts List -->
+            <div class="prompts-container">
+                <div id="promptsList" class="prompts-list">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📝</div>
+                        <h3>No prompts saved yet</h3>
+                        <p>Add your first prompt above to get started with automation.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Import/Export Modal -->
+    <div id="importExportModal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Import/Export Prompts</h3>
+                <button id="closeModalBtn" class="btn btn-text modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="importSection" class="import-section hidden">
+                    <div class="form-group">
+                        <label for="fileInput" class="form-label">Choose JSON file</label>
+                        <input type="file" id="fileInput" accept=".json" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="jsonInput" class="form-label">Or paste JSON data</label>
+                        <textarea id="jsonInput" class="form-control" rows="10" placeholder="Paste your JSON data here..."></textarea>
+                    </div>
+                </div>
+                <div id="exportSection" class="export-section hidden">
+                    <div class="form-group">
+                        <label class="form-label">Export Options</label>
+                        <div class="export-options">
+                            <label class="setting-label">
+                                <input type="checkbox" id="exportSelected" class="setting-checkbox">
+                                Export only selected prompts
+                            </label>
+                            <label class="setting-label">
+                                <input type="checkbox" id="includeMetadata" class="setting-checkbox" checked>
+                                Include metadata (timestamps, etc.)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="exportPreview" class="form-label">Preview</label>
+                        <textarea id="exportPreview" class="form-control" rows="10" readonly></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="modalCancelBtn" class="btn btn-secondary">Cancel</button>
+                <button id="modalActionBtn" class="btn btn-primary">Import</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="prompt-manager.js"></script>
+</body>
+</html>
