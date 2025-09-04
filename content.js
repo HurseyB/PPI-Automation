@@ -397,10 +397,10 @@ class PerplexityAutomator {
           if (Date.now() - start > timeout) {
               return resolve({
                   responseText: '',
-                  error: `AI response timeout after ${timeout/1000}s`
+                  //error: `AI response timeout after ${timeout/1000}s`
               });
           }
-          setTimeout(check, 1000);
+          //setTimeout(check, 1000);
       };
       check();
     });
