@@ -27,7 +27,7 @@ class PerplexityAutomator {
         this.toggleViewBtn = document.getElementById('toggleViewBtn');
 
         // Document management elements - NEW
-        this.downloadTxtBtn = document.getElementById('downloadTxtBtn');
+        //this.downloadTxtBtn = document.getElementById('downloadTxtBtn'); // -- This is unused, and removed from html. Keeping comment for my records.
         this.downloadDocxBtn = document.getElementById('downloadDocxBtn');
         this.clearDocumentBtn = document.getElementById('clearDocumentBtn');
         this.documentStatus = document.getElementById('documentStatus');
@@ -59,7 +59,7 @@ class PerplexityAutomator {
         this.toggleViewBtn.addEventListener('click', () => this.toggleAllPrompts());
 
         // Document management events - NEW
-        this.downloadTxtBtn.addEventListener('click', () => this.documentManager.downloadTxt());
+        //this.downloadTxtBtn.addEventListener('click', () => this.documentManager.downloadTxt()); // -- This is unused, and removed from html. Keeping comment for my records.
         this.downloadDocxBtn.addEventListener('click', () => this.documentManager.downloadDocx());
         this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
@@ -205,7 +205,7 @@ class PerplexityAutomator {
 
     enableDownloadButtons() {
         if (this.documentManager.hasResponses()) {
-            this.downloadTxtBtn.disabled = false;
+            //this.downloadTxtBtn.disabled = false;
             this.downloadDocxBtn.disabled = false;
         }
     }
@@ -215,7 +215,7 @@ class PerplexityAutomator {
             this.documentManager.clearDocument();
             this.updateResponseCount();
             this.updateDocumentStatus('ready', 'Ready');
-            this.downloadTxtBtn.disabled = true;
+            //this.downloadTxtBtn.disabled = true;
             this.downloadDocxBtn.disabled = true;
             this.showNotification('Document cleared', 'info');
         }
