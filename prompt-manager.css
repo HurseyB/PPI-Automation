@@ -32,6 +32,19 @@ html, body {
     min-height: 100vh;
 }
 
+/* Edit Prompt Modal Overrides */
+#editModal .modal-content {
+  max-width: 600px;
+}
+#editTextarea {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  padding: var(--space-16);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+
 
 /* Header Styles */
 .page-header {

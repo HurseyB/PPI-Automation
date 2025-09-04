@@ -48,6 +48,14 @@ class PromptManager {
         this.exportSelected = document.getElementById('exportSelected');
         this.includeMetadata = document.getElementById('includeMetadata');
 
+        // Custom Modal Edit
+        this.editModal = document.getElementById('editModal');
+        this.editModalClose = document.getElementById('editModalClose');
+        this.editTextarea = document.getElementById('editTextarea');
+        this.saveEditBtn = document.getElementById('saveEditBtn');
+        this.cancelEditBtn = document.getElementById('cancelEditBtn');
+
+
         // Progress log elements
         this.progressCurrent = document.getElementById('progressCurrent');
         this.progressText = document.getElementById('progressText');
@@ -83,6 +91,11 @@ class PromptManager {
         this.modalCancelBtn.addEventListener('click', () => this.hideModal());
         this.modalActionBtn.addEventListener('click', () => this.handleModalAction());
         this.modal.querySelector('.modal-overlay').addEventListener('click', () => this.hideModal());
+
+        // Custom Modal events
+        this.editModalClose.addEventListener('click', () => this.hideEditModal());
+        this.cancelEditBtn.addEventListener('click', () => this.hideEditModal());
+        this.saveEditBtn.addEventListener('click', () => this.submitEdit());
 
         // File input
         this.fileInput.addEventListener('change', () => this.handleFileSelect());
@@ -154,20 +167,10 @@ class PromptManager {
     }
 
     async editPrompt(index) {
-      // 1. Rename local variable so it doesn’t shadow window.prompt
-      const promptObj = this.prompts[index];
-      if (!promptObj) return;
-
-      // 2. Call window.prompt explicitly
-      const newText = window.prompt('Edit prompt:', promptObj.text);
-      if (newText === null || newText.trim() === '') return;
-
-      // 3. Update object and re-render
-      promptObj.text = newText.trim();
-      promptObj.modified = new Date().toISOString();
-      await this.savePrompts();
-      this.renderPrompts();
-      this.showNotification('Prompt updated successfully', 'success');
+      this.currentEditIndex = index;
+      this.editTextarea.value = this.prompts[index].text;
+      this.editModal.classList.remove('hidden');
+      this.editTextarea.focus();
     }
 
 
@@ -572,6 +575,8 @@ class PromptManager {
         const header = document.createElement('div');
         header.className = 'prompt-header';
         header.innerHTML = `
+          <div class="prompt-header">
+          <input type="checkbox" class="prompt-checkbox" data-index="${index}">
           <span class="drag-handle">⋮⋮</span>
           <span class="prompt-number">${index + 1}.</span>
           <span class="prompt-preview">${promptObj.text}</span>
@@ -603,6 +608,8 @@ class PromptManager {
 
         // 7. Append to list
         this.promptsList.appendChild(item);
+        const checkbox = item.querySelector('.prompt-checkbox');
+        checkbox.addEventListener('change', () => this.togglePromptSelection(index));
       });
     }
 
@@ -849,6 +856,23 @@ class PromptManager {
         this.automationLog.innerHTML = '<p class="log-empty">No automation activity yet. Start an automation to see logs here.</p>';
       }
     }
+
+    hideEditModal() {
+      this.editModal.classList.add('hidden');
+      this.currentEditIndex = null;
+    }
+
+    async submitEdit() {
+      const newText = this.editTextarea.value.trim();
+      if (!newText || this.currentEditIndex === null) return;
+      this.prompts[this.currentEditIndex].text = newText;
+      this.prompts[this.currentEditIndex].modified = new Date().toISOString();
+      await this.savePrompts();
+      this.renderPrompts();
+      this.hideEditModal();
+      this.showNotification('Prompt updated successfully', 'success');
+    }
+
 
 }
 

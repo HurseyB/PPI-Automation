@@ -168,5 +168,22 @@
     </div>
 
     <script src="prompt-manager.js"></script>
+
+    <div id="editModal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Prompt</h3>
+                <button id="editModalClose" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="editTextarea" rows="5" style="width:100%; resize: vertical;"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="saveEditBtn">Save</button>
+                <button id="cancelEditBtn">Cancel</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
