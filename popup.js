@@ -1,6 +1,6 @@
 /**
- * Enhanced Perplexity AI Automator - Fixed Popup Script
- * Fixes premature progress counting and UI state management
+ * Enhanced Perplexity AI Automator - Fixed Popup Script  
+ * Fixed: Added proper error handling for connection issues
  */
 
 class PerplexityAutomator {
@@ -99,7 +99,7 @@ class PerplexityAutomator {
     // Use exact values from background script
     const current = data.current;
     const total = data.total;
-    
+
     // Update progress display
     this.progressText.textContent = `${current} of ${total} completed`;
     const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
@@ -126,7 +126,6 @@ class PerplexityAutomator {
     this.updateAutomationButton();
     this.currentPrompt.textContent = `Automation completed! ${data.completed}/${data.total} prompts processed`;
     this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
-    
     if (data.summary) {
       this.logMessage(`Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
     }
@@ -165,221 +164,163 @@ class PerplexityAutomator {
     this.automationLog.scrollTop = this.automationLog.scrollHeight;
   }
 
-  async loadPrompts() {
-    try {
-      const result = await browser.storage.local.get('prompts');
-      this.prompts = result.prompts || [];
-      this.updateUI();
-    } catch (error) {
-      this.logError('Failed to load prompts:', error);
-    }
-  }
-
-  async savePrompts() {
-    try {
-      await browser.storage.local.set({ prompts: this.prompts });
-    } catch (error) {
-      this.logError('Failed to save prompts:', error);
-    }
-  }
-
-  validateInput() {
-    const text = this.promptInput.value.trim();
-    const isValid = text.length > 0 && this.prompts.length < 50;
-    this.addPromptBtn.disabled = !isValid;
-  }
-
   addPrompt() {
-    const text = this.promptInput.value.trim();
-    if (!text) {
-      this.showNotification('Please enter a prompt', 'error');
-      return;
-    }
+    const promptText = this.promptInput.value.trim();
+    if (!promptText) return;
 
-    if (this.prompts.length >= 50) {
-      this.showNotification('Maximum of 50 prompts allowed', 'error');
-      return;
-    }
-
-    const prompt = {
-      id: Date.now(),
-      text: text,
-      createdAt: new Date().toISOString(),
-      expanded: false
-    };
-
-    this.prompts.push(prompt);
+    this.prompts.push(promptText);
     this.promptInput.value = '';
+    this.renderPrompts();
     this.savePrompts();
-    this.updateUI();
-    this.showNotification('Prompt added successfully', 'success');
-  }
-
-  editPrompt(id) {
-    const prompt = this.prompts.find(p => p.id === id);
-    if (!prompt) return;
-
-    const newText = window.prompt('Edit prompt:', prompt.text);
-    if (newText !== null && newText.trim()) {
-      prompt.text = newText.trim();
-      this.savePrompts();
-      this.updateUI();
-      this.showNotification('Prompt updated successfully', 'success');
-    }
-  }
-
-  deletePrompt(id) {
-    if (!window.confirm('Are you sure you want to delete this prompt?')) {
-      return;
-    }
-
-    this.prompts = this.prompts.filter(p => p.id !== id);
-    this.savePrompts();
-    this.updateUI();
-    this.showNotification('Prompt deleted successfully', 'success');
+    this.validateInput();
   }
 
   clearAllPrompts() {
-    if (!window.confirm(`Are you sure you want to delete all ${this.prompts.length} prompts?`)) {
-      return;
+    if (this.prompts.length === 0) return;
+    
+    if (confirm('Are you sure you want to clear all prompts?')) {
+      this.prompts = [];
+      this.renderPrompts();
+      this.savePrompts();
+      this.validateInput();
     }
-
-    this.prompts = [];
-    this.savePrompts();
-    this.updateUI();
-    this.showNotification('All prompts cleared', 'success');
   }
 
-  togglePrompt(id) {
-    const prompt = this.prompts.find(p => p.id === id);
-    if (prompt) {
-      prompt.expanded = !prompt.expanded;
-      this.updateUI();
+  deletePrompt(index) {
+    this.prompts.splice(index, 1);
+    this.renderPrompts();
+    this.savePrompts();
+    this.validateInput();
+  }
+
+  editPrompt(index) {
+    const currentText = this.prompts[index];
+    const newText = prompt('Edit prompt:', currentText);
+    if (newText !== null && newText.trim() !== '') {
+      this.prompts[index] = newText.trim();
+      this.renderPrompts();
+      this.savePrompts();
+    }
+  }
+
+  togglePromptExpansion(index) {
+    const contentElement = document.querySelector(`[data-prompt-content="${index}"]`);
+    if (contentElement) {
+      contentElement.classList.toggle('expanded');
     }
   }
 
   toggleAllPrompts() {
     this.collapsedAll = !this.collapsedAll;
-    this.prompts.forEach(prompt => {
-      prompt.expanded = !this.collapsedAll;
-    });
-    this.updateUI();
+    const contentElements = document.querySelectorAll('.prompt-content');
+    
+    if (this.collapsedAll) {
+      contentElements.forEach(el => el.classList.remove('expanded'));
+      this.toggleViewBtn.textContent = 'Expand All';
+    } else {
+      contentElements.forEach(el => el.classList.add('expanded'));
+      this.toggleViewBtn.textContent = 'Collapse All';
+    }
+  }
+
+  renderPrompts() {
+    this.promptCount.textContent = this.prompts.length;
+    
+    if (this.prompts.length === 0) {
+      this.promptsList.innerHTML = '<div class="empty-state">No prompts added yet. Add your first prompt above!</div>';
+      return;
+    }
+
+    const promptsHTML = this.prompts.map((prompt, index) => `
+      <div class="prompt-item">
+        <div class="prompt-header" onclick="automator.togglePromptExpansion(${index})">
+          <span class="prompt-number">#${index + 1}</span>
+          <span class="prompt-preview">${this.escapeHtml(prompt.substring(0, 60))}${prompt.length > 60 ? '...' : ''}</span>
+          <div class="prompt-actions" onclick="event.stopPropagation();">
+            <button class="btn btn-edit btn-icon" onclick="automator.editPrompt(${index})" title="Edit">✏️</button>
+            <button class="btn btn-delete btn-icon" onclick="automator.deletePrompt(${index})" title="Delete">🗑️</button>
+          </div>
+        </div>
+        <div class="prompt-content" data-prompt-content="${index}">
+          <div class="prompt-text">${this.escapeHtml(prompt)}</div>
+        </div>
+      </div>
+    `).join('');
+
+    this.promptsList.innerHTML = promptsHTML;
   }
 
   async startAutomation() {
     if (this.prompts.length === 0) {
-      this.showNotification('Please add at least one prompt', 'error');
+      this.showNotification('Please add at least one prompt before starting automation.', 'error');
       return;
     }
 
     if (this.isRunning) {
-      this.showNotification('Automation is already running', 'error');
+      this.showNotification('Automation is already running.', 'warning');
       return;
     }
 
     try {
-      // Get current active tab
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      const currentTab = tabs[0];
+      // Get current tab
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      
+      if (!tab) {
+        throw new Error('Could not get current tab');
+      }
 
-      if (!currentTab) {
-        this.showNotification('No active tab found', 'error');
+      // Check if it's a Perplexity tab
+      if (!tab.url.includes('perplexity.ai')) {
+        this.showNotification('Please navigate to perplexity.ai first.', 'error');
         return;
       }
 
-      // Check if it's a Perplexity.ai tab
+      // Disable the start button
+      this.startAutomationBtn.disabled = true;
+      
+      // Send start automation message to background script
       const response = await browser.runtime.sendMessage({
-        type: 'check-perplexity-tab',
-        tabId: currentTab.id
-      });
-
-      if (!response.isPerplexity) {
-        this.showNotification('Please navigate to perplexity.ai first', 'error');
-        return;
-      }
-
-      // Extract prompt texts from prompt objects
-      const promptTexts = this.prompts.map(prompt => prompt.text);
-
-      // Start automation
-      await browser.runtime.sendMessage({
         type: 'start-automation',
-        prompts: promptTexts,
-        tabId: currentTab.id
+        prompts: this.prompts,
+        tabId: tab.id
       });
 
-      this.showNotification('Automation started!', 'success');
-
+      if (!response || !response.success) {
+        throw new Error(response?.error || 'Failed to start automation');
+      }
+      
     } catch (error) {
+      this.startAutomationBtn.disabled = false;
       this.logError('Failed to start automation:', error);
-      this.showNotification('Failed to start automation: ' + error.message, 'error');
+      
+      // Check for specific connection errors
+      if (error.message.includes('Could not establish connection') || 
+          error.message.includes('Receiving end does not exist')) {
+        this.showNotification('Extension connection error. Please try reloading the page and reopening this popup.', 'error');
+      } else {
+        this.showNotification('Failed to start automation: ' + error.message, 'error');
+      }
     }
   }
 
   async stopAutomation() {
     if (!this.isRunning) {
-      this.showNotification('No automation is running', 'error');
+      this.showNotification('No automation is currently running.', 'warning');
       return;
     }
 
     try {
-      await browser.runtime.sendMessage({
+      const response = await browser.runtime.sendMessage({
         type: 'stop-automation'
       });
 
-      this.showNotification('Automation stopped', 'success');
+      if (!response || !response.success) {
+        throw new Error(response?.error || 'Failed to stop automation');
+      }
     } catch (error) {
       this.logError('Failed to stop automation:', error);
       this.showNotification('Failed to stop automation: ' + error.message, 'error');
     }
-  }
-
-  updateUI() {
-    this.updatePromptCount();
-    this.updatePromptsList();
-    this.updateAutomationButton();
-    this.updateToggleButton();
-    this.validateInput();
-  }
-
-  updatePromptCount() {
-    this.promptCount.textContent = this.prompts.length;
-    this.promptCount.style.color = this.prompts.length >= 50 ? 'var(--color-error)' : 'var(--color-text-secondary)';
-  }
-
-  updatePromptsList() {
-    if (this.prompts.length === 0) {
-      this.promptsList.innerHTML = `
-        <div class="empty-state">
-          No prompts saved yet. Add your first prompt above.
-        </div>
-      `;
-      return;
-    }
-
-    this.promptsList.innerHTML = this.prompts.map((prompt, index) => {
-      const preview = prompt.text.length > 80 ? prompt.text.substring(0, 80) + '...' : prompt.text;
-      
-      return `
-        <div class="prompt-item">
-          <div class="prompt-header" onclick="window.automator.togglePrompt(${prompt.id})">
-            <span class="prompt-number">#${index + 1}</span>
-            <span class="prompt-preview">${this.escapeHtml(preview)}</span>
-            <div class="prompt-actions">
-              <button class="btn btn-edit" onclick="event.stopPropagation(); window.automator.editPrompt(${prompt.id})" title="Edit prompt">
-                ✏️
-              </button>
-              <button class="btn btn-delete" onclick="event.stopPropagation(); window.automator.deletePrompt(${prompt.id})" title="Delete prompt">
-                🗑️
-              </button>
-            </div>
-          </div>
-          <div class="prompt-content ${prompt.expanded ? 'expanded' : ''}">
-            <div class="prompt-text">${this.escapeHtml(prompt.text)}</div>
-          </div>
-        </div>
-      `;
-    }).join('');
   }
 
   updateAutomationButton() {
@@ -388,63 +329,87 @@ class PerplexityAutomator {
       this.stopAutomationBtn.style.display = 'block';
     } else {
       this.startAutomationBtn.style.display = 'block';
+      this.startAutomationBtn.disabled = false;
       this.stopAutomationBtn.style.display = 'none';
     }
-
-    this.startAutomationBtn.disabled = this.prompts.length === 0 || this.isRunning;
   }
 
-  updateToggleButton() {
-    if (this.prompts.length === 0) {
-      this.toggleViewBtn.style.display = 'none';
-      return;
+  validateInput() {
+    const hasText = this.promptInput.value.trim().length > 0;
+    const hasPrompts = this.prompts.length > 0;
+    
+    this.addPromptBtn.disabled = !hasText;
+    this.clearAllBtn.style.display = hasPrompts ? 'inline-flex' : 'none';
+    this.toggleViewBtn.style.display = hasPrompts ? 'inline-flex' : 'none';
+    
+    // Update start button state
+    if (!this.isRunning) {
+      this.startAutomationBtn.disabled = !hasPrompts;
     }
+  }
 
-    this.toggleViewBtn.style.display = 'block';
-    this.toggleViewBtn.textContent = this.collapsedAll ? 'Expand All' : 'Collapse All';
+  savePrompts() {
+    try {
+      browser.storage.local.set({ prompts: this.prompts });
+    } catch (error) {
+      this.logError('Failed to save prompts:', error);
+    }
+  }
+
+  async loadPrompts() {
+    try {
+      const result = await browser.storage.local.get(['prompts']);
+      if (result.prompts && Array.isArray(result.prompts)) {
+        this.prompts = result.prompts;
+        this.renderPrompts();
+        this.validateInput();
+      }
+    } catch (error) {
+      this.logError('Failed to load prompts:', error);
+    }
   }
 
   showNotification(message, type = 'info') {
     // Create notification element
     const notification = document.createElement('div');
-    notification.className = `notification notification-${type}`;
+    notification.className = `notification notification--${type}`;
     notification.textContent = message;
-    notification.style.cssText = `
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      padding: 10px 15px;
-      border-radius: 4px;
-      color: white;
-      font-weight: 500;
-      z-index: 10000;
-      max-width: 300px;
-      word-wrap: break-word;
-    `;
+    
+    // Style the notification
+    Object.assign(notification.style, {
+      position: 'fixed',
+      top: '10px',
+      right: '10px',
+      padding: '10px 15px',
+      borderRadius: '5px',
+      color: 'white',
+      fontSize: '14px',
+      zIndex: '10000',
+      maxWidth: '300px',
+      wordWrap: 'break-word'
+    });
 
     // Set background color based on type
-    switch (type) {
-      case 'success':
-        notification.style.backgroundColor = 'var(--color-success)';
-        break;
-      case 'error':
-        notification.style.backgroundColor = 'var(--color-error)';
-        break;
-      case 'warning':
-        notification.style.backgroundColor = 'var(--color-warning)';
-        break;
-      default:
-        notification.style.backgroundColor = 'var(--color-info)';
-    }
+    const colors = {
+      info: '#3498db',
+      success: '#2ecc71',
+      warning: '#f39c12',
+      error: '#e74c3c'
+    };
+    notification.style.backgroundColor = colors[type] || colors.info;
 
+    // Add to page
     document.body.appendChild(notification);
 
-    // Remove notification after 3 seconds
+    // Remove after 5 seconds
     setTimeout(() => {
       if (notification.parentNode) {
         notification.parentNode.removeChild(notification);
       }
-    }, 3000);
+    }, 5000);
+
+    // Also log the message
+    this.logMessage(`${type.toUpperCase()}: ${message}`);
   }
 
   escapeHtml(text) {
@@ -462,7 +427,5 @@ class PerplexityAutomator {
   }
 }
 
-// Initialize automator when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-  window.automator = new PerplexityAutomator();
-});
+// Initialize the automator when the popup loads
+const automator = new PerplexityAutomator();

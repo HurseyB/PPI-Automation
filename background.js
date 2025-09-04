@@ -1,6 +1,6 @@
 /**
  * Enhanced Perplexity AI Automator - Background Script
- * Fixed: Corrected retry logic and prompt indexing
+ * Fixed: Prevent duplicate completion handling and ensure proper prompt indexing
  */
 
 class AutomationManager {
@@ -15,6 +15,7 @@ class AutomationManager {
     this.currentTimeout = null;
     this.retryAttempts = new Map();
     this.isProcessingPrompt = false;
+    this.completedPrompts = new Set(); // Track completed prompts to prevent duplicates
     this.settings = {
       delay: 3000,
       maxRetries: 3,
@@ -168,6 +169,7 @@ class AutomationManager {
     this.automationId = Date.now();
     this.processedResults = [];
     this.retryAttempts.clear();
+    this.completedPrompts.clear(); // Clear completed prompts set
     this.isProcessingPrompt = false;
 
     this.log(`Starting automation with ${prompts.length} prompts on tab ${tabId}`);
@@ -325,22 +327,32 @@ class AutomationManager {
   }
 
   async handlePromptCompleted(result) {
-    const promptNumber = this.currentPromptIndex + 1;
+    const idx = result.index;
+    const promptNumber = idx + 1;
+
+    // Check if we've already processed this completion to prevent duplicates
+    if (this.completedPrompts.has(idx)) {
+      this.log(`Prompt ${promptNumber} completion already processed, ignoring duplicate`);
+      return;
+    }
+
+    // Mark this prompt as completed
+    this.completedPrompts.add(idx);
     this.log(`Prompt ${promptNumber} completed successfully`);
-    
+
     // Clear timeout and processing flag
     this.clearCurrentTimeout();
     this.isProcessingPrompt = false;
 
-    // Process and store result
+    // Process and store result using the idx
     const processedResult = {
-      index: this.currentPromptIndex,
+      index: idx,
       promptNumber: promptNumber,
-      prompt: this.prompts[this.currentPromptIndex],
+      prompt: this.prompts[idx],
       response: result.response || '',
       timestamp: result.timestamp || Date.now(),
       success: true,
-      retryCount: this.retryAttempts.get(this.currentPromptIndex) || 0,
+      retryCount: this.retryAttempts.get(idx) || 0,
       processingTime: Date.now() - (result.startTime || Date.now()),
       automationId: this.automationId
     };
@@ -348,34 +360,34 @@ class AutomationManager {
     this.processedResults.push(processedResult);
 
     // Save result
-    await this.savePromptResult(this.currentPromptIndex, processedResult);
+    await this.savePromptResult(idx, processedResult);
 
-    // Update progress with completion - use completed count
+    // Update progress with completion count
     await this.sendMessageToPopup('automation-progress', {
-      current: this.processedResults.length, // Now show completed count
+      current: this.processedResults.length,
       total: this.prompts.length,
-      prompt: this.prompts[this.currentPromptIndex],
+      prompt: this.prompts[idx],
       status: 'completed',
       response: result.response,
       hasResponse: !!(result.response && result.response.length > 0)
     });
 
-    // Move to next prompt
-    this.currentPromptIndex++;
-    this.retryAttempts.delete(this.currentPromptIndex - 1);
+    // Move pointer forward only if idx matches currentPromptIndex
+    if (idx === this.currentPromptIndex) {
+      this.currentPromptIndex++;
+    }
+    this.retryAttempts.delete(idx);
     await this.saveAutomationState();
 
-    // Wait before processing next prompt
+    // Wait before next prompt or complete
     if (this.currentPromptIndex < this.prompts.length) {
-      this.log(`Waiting ${this.settings.delay}ms before next prompt`);
       this.currentTimeout = setTimeout(() => {
         if (this.isRunning && !this.isPaused) {
           this.processNextPrompt();
         }
       }, this.settings.delay);
     } else {
-      // All prompts completed
-      await this.processNextPrompt(); // This will trigger completion
+      await this.completeAutomation();
     }
   }
 
@@ -383,6 +395,12 @@ class AutomationManager {
     // Use the correct prompt index - either passed or current
     const actualIndex = promptIndex !== undefined ? promptIndex : this.currentPromptIndex;
     const promptNumber = actualIndex + 1;
+    
+    // Check if we've already processed this failure to prevent duplicates
+    if (this.completedPrompts.has(actualIndex)) {
+      this.log(`Prompt ${promptNumber} failure already processed, ignoring duplicate`);
+      return;
+    }
     
     this.logError(`Prompt ${promptNumber} failed:`, error);
     
@@ -420,6 +438,9 @@ class AutomationManager {
       }, this.settings.retryDelay);
 
     } else {
+      // Mark this prompt as completed (failed)
+      this.completedPrompts.add(actualIndex);
+      
       // Save failed result
       const failedResult = {
         index: actualIndex,
@@ -713,6 +734,7 @@ class AutomationManager {
         automationId: this.automationId,
         processedResults: this.processedResults,
         retryAttempts: Array.from(this.retryAttempts.entries()),
+        completedPrompts: Array.from(this.completedPrompts), // Save completed prompts
         isProcessingPrompt: this.isProcessingPrompt,
         timestamp: Date.now()
       };

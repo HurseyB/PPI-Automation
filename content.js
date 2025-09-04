@@ -1,6 +1,6 @@
 /**
  * Perplexity AI Automator - Content Script
- * Fixed: Removed DOM cloning and fixed response extraction
+ * Fixed: Prevent duplicate completion messages
  */
 
 class PerplexityAutomator {
@@ -13,6 +13,7 @@ class PerplexityAutomator {
     this.waitTimeout = 10000;
     this.responseTimeout = 45000;
     this.isExecuting = false;
+    this.hasCompletedCurrentPrompt = false; // Add flag to prevent duplicates
     this.selectors = {
       textareas: [
         'textarea',
@@ -144,38 +145,43 @@ class PerplexityAutomator {
     this.currentPrompt = prompt;
     this.retryCount = 0;
     this.isExecuting = true;
+    this.hasCompletedCurrentPrompt = false; // Reset completion flag
 
     try {
       // Step 1: Submit the prompt
       await this.processPrompt(prompt);
-      
-      // Step 2: Wait for and extract AI response  
+
+      // Step 2: Wait for and extract AI response
       const { responseText, error } = await this.waitForResponseText();
-      
       if (error) throw new Error(error);
 
-      // Step 3: Notify background of completion
-      await browser.runtime.sendMessage({
-        type: 'prompt-completed',
-        result: {
-          index: index,
-          prompt: prompt,
-          timestamp: Date.now(),
-          success: true,
-          response: responseText,
-          startTime: Date.now()
-        }
-      });
-
-      this.log(`Prompt ${index + 1} completed successfully`);
+      // Step 3: Notify background of completion (only once)
+      if (!this.hasCompletedCurrentPrompt) {
+        this.hasCompletedCurrentPrompt = true;
+        await browser.runtime.sendMessage({
+          type: 'prompt-completed',
+          result: {
+            index: index,
+            prompt: prompt,
+            timestamp: Date.now(),
+            success: true,
+            response: responseText,
+            startTime: Date.now()
+          }
+        });
+        this.log(`Prompt ${index + 1} completed successfully`);
+      }
 
     } catch (error) {
       this.logError('Failed to execute prompt:', error);
-      await browser.runtime.sendMessage({
-        type: 'prompt-failed',
-        error: error.message,
-        promptIndex: index
-      });
+      if (!this.hasCompletedCurrentPrompt) {
+        this.hasCompletedCurrentPrompt = true;
+        await browser.runtime.sendMessage({
+          type: 'prompt-failed',
+          error: error.message,
+          promptIndex: index
+        });
+      }
     } finally {
       this.isExecuting = false;
     }
@@ -281,11 +287,10 @@ class PerplexityAutomator {
     const hasSubmitText = submitKeywords.some(keyword =>
       text.includes(keyword) || ariaLabel.includes(keyword) || title.includes(keyword)
     );
-    
     const hasSvg = element.querySelector('svg') !== null;
     const hasArrowIcon = element.innerHTML.includes('arrow') || element.innerHTML.includes('→');
     const isFormSubmit = element.type === 'submit';
-    
+
     return hasSubmitText || hasSvg || hasArrowIcon || isFormSubmit;
   }
 
@@ -303,10 +308,9 @@ class PerplexityAutomator {
 
   replaceValue(element, value) {
     if (!element) return null;
-    
+
     try {
       element.focus();
-      
       // Select all existing content
       document.execCommand('selectAll');
       
@@ -323,7 +327,7 @@ class PerplexityAutomator {
       element.dispatchEvent(new Event('input', { bubbles: true }));
       element.dispatchEvent(new Event('change', { bubbles: true }));
       element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-      
+
     } catch (error) {
       this.logError('Error in replaceValue:', error);
       throw error;
@@ -363,7 +367,6 @@ class PerplexityAutomator {
       });
 
       this.log('Submit button clicked via MouseEvent sequence');
-      
     } catch (error) {
       this.logError('Failed to click submit button:', error);
       throw new Error('Submit click failed: ' + error.message);
@@ -381,7 +384,7 @@ class PerplexityAutomator {
       style.opacity !== '0' &&
       rect.width > 0 &&
       rect.height > 0;
-    
+      
     const isInteractive = !element.disabled && !element.readOnly;
     
     return isVisible && isInteractive;
@@ -410,6 +413,7 @@ class PerplexityAutomator {
     this.currentPrompt = null;
     this.retryCount = 0;
     this.isExecuting = false;
+    this.hasCompletedCurrentPrompt = false;
   }
 
   sleep(ms) {
@@ -431,7 +435,6 @@ class PerplexityAutomator {
         // Look for response nodes that appeared after submission
         for (const selector of this.selectors.responseContainers) {
           const nodes = Array.from(document.querySelectorAll(selector));
-          
           // Find newest node (not in initial set)
           for (let i = nodes.length - 1; i >= 0; i--) {
             const node = nodes[i];
@@ -439,7 +442,7 @@ class PerplexityAutomator {
               return node;
             }
           }
-          
+
           // Fallback to last visible node
           if (nodes.length > 0) {
             for (let i = nodes.length - 1; i >= 0; i--) {
@@ -453,6 +456,8 @@ class PerplexityAutomator {
       };
 
       const tryExtractResponse = () => {
+        if (resolved) return null; // Prevent multiple extractions
+        
         let responseNode = getLatestResponseNode();
         if (!responseNode) return null;
 
@@ -460,7 +465,7 @@ class PerplexityAutomator {
         const loadingSpinner = responseNode.querySelector(
           '[role="progressbar"], [aria-busy="true"], .Loader, svg[aria-label="Loading"], [data-testid*="spinner"], [data-testid*="loading"]'
         );
-        
+
         if (loadingSpinner) {
           this.log('Response still loading...');
           return null;
@@ -468,7 +473,6 @@ class PerplexityAutomator {
 
         // Extract response text directly without cloning
         const text = this.extractCleanedResponseText(responseNode);
-        
         if (text && text.length > 10) { // Minimum meaningful response length
           this.log('Response extracted successfully:', text.substring(0, 100) + '...');
           return { text };
@@ -480,7 +484,7 @@ class PerplexityAutomator {
       // Set up MutationObserver to watch for changes
       const observer = new MutationObserver((mutationsList) => {
         if (resolved) return;
-        
+
         // Check if any mutations indicate new content
         let hasContentChange = false;
         for (const mutation of mutationsList) {
@@ -496,7 +500,7 @@ class PerplexityAutomator {
 
         if (hasContentChange) {
           const result = tryExtractResponse();
-          if (result) {
+          if (result && !resolved) {
             resolved = true;
             observer.disconnect();
             clearTimeout(timeoutId);
@@ -510,23 +514,22 @@ class PerplexityAutomator {
 
       // Observe the main content area
       const targetNode = document.querySelector('main') || document.body;
-      observer.observe(targetNode, { 
-        childList: true, 
-        subtree: true, 
-        characterData: true 
+      observer.observe(targetNode, {
+        childList: true,
+        subtree: true,
+        characterData: true
       });
 
       // Also use polling as backup
       let pollTries = 0;
       const pollInterval = 1000; // Check every second
-      
+
       const poll = async () => {
         if (resolved) return;
         
         pollTries++;
         const result = tryExtractResponse();
-        
-        if (result) {
+        if (result && !resolved) {
           resolved = true;
           observer.disconnect();
           clearTimeout(timeoutId);
@@ -538,12 +541,14 @@ class PerplexityAutomator {
         }
 
         if (pollTries * pollInterval >= timeout) {
-          resolved = true;
-          observer.disconnect();
-          resolve({
-            responseText: "",
-            error: "AI response timeout after " + (timeout / 1000) + "s"
-          });
+          if (!resolved) {
+            resolved = true;
+            observer.disconnect();
+            resolve({
+              responseText: "",
+              error: "AI response timeout after " + (timeout / 1000) + "s"
+            });
+          }
         } else {
           setTimeout(poll, pollInterval);
         }
@@ -570,7 +575,6 @@ class PerplexityAutomator {
     if (!node) return '';
 
     let parts = [];
-    
     const traverse = (currentNode) => {
       if (currentNode.nodeType === Node.TEXT_NODE) {
         const text = currentNode.textContent.trim();
@@ -581,7 +585,7 @@ class PerplexityAutomator {
           parts.push('\n```\n' + currentNode.textContent + '\n```\n');
           return;
         }
-        
+
         if (currentNode.tagName === 'CODE' && !currentNode.closest('pre')) {
           parts.push('`' + currentNode.textContent.trim() + '`');
           return;
@@ -596,7 +600,6 @@ class PerplexityAutomator {
               const prefix = isOrdered ? `${idx + 1}. ` : '- ';
               return prefix + (li.innerText || li.textContent).trim();
             });
-          
           if (items.length > 0) {
             parts.push('\n' + items.join('\n') + '\n');
           }
@@ -643,7 +646,6 @@ class PerplexityAutomator {
 /* --------- Initialization & SPA Navigation Hijack --------- */
 
 let automator = null;
-
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initializeAutomator);
 } else {
