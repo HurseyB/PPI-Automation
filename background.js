@@ -321,6 +321,7 @@ class AutomationManager {
           processedResults: [],
           retryAttempts: new Map(),
           completedPrompts: new Set(),
+          processingCompletions: new Set(), // ✅ Track actively processing completions
           isProcessingPrompt: false,
           currentTimeout: null
       };
@@ -387,6 +388,12 @@ class AutomationManager {
       isPaused: false,
       isProcessingPrompt: false
     });
+
+    // ✅ CLEANUP - Clear processing completion tracker
+    if (tabState.processingCompletions) {
+      tabState.processingCompletions.clear();
+    }
+
 
     // Update global state
     this.isRunning = this.hasRunningAutomation();
@@ -550,20 +557,31 @@ class AutomationManager {
     const idx = result.index;
     const promptNumber = idx + 1;
 
-    // Check if we've already processed this completion to prevent duplicates
-    if (tabState.completedPrompts.has(idx)) {
+    // ✅ ATOMIC CHECK AND LOCK MECHANISM
+    // Initialize processing completion tracker if needed
+    if (!tabState.processingCompletions) {
+      tabState.processingCompletions = new Set();
+    }
+
+    // ✅ COMPREHENSIVE DUPLICATE DETECTION
+    // Check all possible duplicate conditions atomically
+    if (tabState.completedPrompts.has(idx) ||
+        tabState.processingCompletions.has(idx) ||
+        tabState.processedResults.some(r => r.index === idx)) {
       this.log(`Prompt ${promptNumber} completion already processed, ignoring duplicate`);
       return;
     }
 
-    // Mark this prompt as completed
+    // ✅ IMMEDIATE LOCK - Mark as both completed and processing
     tabState.completedPrompts.add(idx);
+    tabState.processingCompletions.add(idx);
+
     this.log(`Prompt ${promptNumber} completed successfully`);
 
     // Clear tab-specific timeout and processing flag
     this.clearTabTimeout(tabId);
     this.updateTabState(tabId, { isProcessingPrompt: false });
-
+  try {
     // Process and store result using the idx
     const processedResult = {
       index: idx,
@@ -630,6 +648,15 @@ class AutomationManager {
     } else {
       await this.completeAutomation(tabId);
     }
+  } catch (error) {
+    this.logError(`Error processing completion for prompt ${promptNumber}:`, error);
+    // Don't re-throw - we've already marked as completed to prevent retries
+  } finally {
+      // ✅ CLEANUP - Always remove from processing set
+      if (tabState.processingCompletions) {
+        tabState.processingCompletions.delete(idx);
+      }
+    }
   }
 
   async handlePromptFailed(error, promptIndex, tabId) {
@@ -644,9 +671,10 @@ class AutomationManager {
     const promptNumber = actualIndex + 1;
     
     // Check if we've already processed this failure to prevent duplicates
-    if (tabState.completedPrompts.has(actualIndex)) {
-      this.log(`Prompt ${promptNumber} failure already processed, ignoring duplicate`);
-      return;
+    if (tabState.completedPrompts.has(actualIndex) ||
+      (tabState.processingCompletions && tabState.processingCompletions.has(actualIndex))) {
+        this.log(`Prompt ${promptNumber} failure already processed, ignoring duplicate`);
+        return;
     }
     
     this.logError(`Prompt ${promptNumber} failed:`, error);
