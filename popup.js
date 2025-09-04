@@ -14,7 +14,8 @@ class PerplexityAutomator {
                 timestamp: Date.now()
             },
             // NEW: Save log messages
-            logMessages: this.automationLog ? this.automationLog.innerHTML : ''
+            logMessages: this.automationLog ? this.automationLog.innerHTML : '',
+            companyName: this.companyNameInput ? this.companyNameInput.value : ''
         };
         await browser.storage.local.set({ popupUIState: uiState });
     }
@@ -55,6 +56,11 @@ class PerplexityAutomator {
 
         this.loadUIState().then(async state => {  // <- ADD 'async' HERE
             if (!state) return;
+
+            // Restore Company Name
+            if (state.companyName !== undefined && this.companyNameInput) {
+                this.companyNameInput.value = state.companyName;
+            }
 
             // Restore document data FIRST if it exists, but prioritize background sync
             if (state.documentData && state.documentData.document) {
@@ -139,6 +145,7 @@ class PerplexityAutomator {
       this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
       this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
       this.stopAutomationBtn = document.getElementById('stopAutomationBtn');
+      this.companyNameInput = document.getElementById('companyNameInput');
 
       // Progress elements (these don't exist in popup, but needed for compatibility)
       this.progressText = null;
@@ -580,9 +587,17 @@ class PerplexityAutomator {
                 return;
             }
 
+            const companyName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+            const promptsToSend = this.prompts.map(text => {
+                if (!companyName) return text;
+                return text
+                    .replace(/\[Company\]/g, companyName)
+                    .replace(/\[Company Name\]/g, companyName);
+            });
+
             await browser.runtime.sendMessage({
                 type: 'start-automation',
-                prompts: this.prompts,
+                prompts: promptsToSend,
                 tabId: tab.id
             });
 
