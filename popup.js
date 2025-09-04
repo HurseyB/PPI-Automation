@@ -804,267 +804,385 @@ class PerplexityAutomator {
 }
 
 // NEW: Document Management Class
+/**
+ * Enhanced Document Manager for Microsoft Word Layout
+ * Formats DOCX with Times New Roman index, Aptos Display headings
+ */
 class DocumentManager {
-    async saveDocumentState() {
-        try {
-            // Save to both popup storage and sync with background
-            await browser.storage.local.set({
-                documentData: this.document,
-                backgroundDocument: this.document  // Keep background in sync
-            });
-        } catch (error) {
-            console.error('Failed to save document state:', error);
-        }
+    constructor() {
+        this.document = {
+            title: 'Perplexity AI Automation Results',
+            timestamp: null,
+            responses: [],
+            summary: null
+        };
     }
-
 
     async loadDocumentState() {
         try {
-            // FIRST: Try to load from background document manager
-            const backgroundResult = await browser.storage.local.get(['backgroundDocument']);
-            if (backgroundResult.backgroundDocument && backgroundResult.backgroundDocument.responses.length > 0) {
-                // Use background document as primary source, but map the structure
-                this.document = {
-                    ...backgroundResult.backgroundDocument,
-                    responses: backgroundResult.backgroundDocument.responses.map(bgResponse => ({
-                        promptNumber: bgResponse.index + 1, // Convert 0-based index to 1-based prompt number
-                        promptText: bgResponse.prompt,
-                        responseText: bgResponse.response,
-                        timestamp: bgResponse.timestamp
-                    }))
-                };
-                console.log('Document state loaded from background:', this.getResponseCount(), 'responses');
-
-                // Also save to popup storage for backup
-                await browser.storage.local.set({ documentData: this.document });
-                return;
-            }
-
-
-            // FALLBACK: Load from popup's own storage if no background document
-            const result = await browser.storage.local.get(['documentData']);
-            if (result.documentData) {
-                this.document = result.documentData;
-                console.log('Document state loaded from popup storage:', this.getResponseCount(), 'responses');
+            const result = await browser.storage.local.get(['popupDocument']);
+            if (result.popupDocument) {
+                this.document = result.popupDocument;
+                console.log('Document state loaded:', this.getResponseCount(), 'responses');
             }
         } catch (error) {
             console.error('Failed to load document state:', error);
         }
     }
 
-
-    async clearDocumentState() {
+    async saveDocumentState() {
         try {
-            await browser.storage.local.remove('documentManagerState');
+            await browser.storage.local.set({ popupDocument: this.document });
         } catch (error) {
-            console.error('Failed to clear document state:', error);
+            console.error('Failed to save document state:', error);
         }
     }
 
-    constructor() {
-        this.document = {
-            title: 'PERPLEXITY AI AUTOMATION REPORT',
-            timestamp: null,
-            totalPrompts: 0,
-            responses: [],
-            summary: null
-        };
-    }
-
-    initializeDocument(totalPrompts) {
-        this.document = {
-            title: 'PERPLEXITY AI AUTOMATION REPORT',
-            timestamp: new Date().toISOString(),
-            totalPrompts: totalPrompts,
-            responses: [],
-            summary: null
-        };
-        this.saveDocumentState();
+    async syncWithBackground() {
+        try {
+            const response = await browser.runtime.sendMessage({ type: 'get-document-data' });
+            if (response && response.document && response.document.responses.length > 0) {
+                // Map background document structure to popup structure
+                this.document = {
+                    ...this.document,
+                    responses: response.document.responses.map(bgResponse => ({
+                        promptNumber: bgResponse.index + 1,
+                        promptText: bgResponse.prompt,
+                        responseText: bgResponse.response,
+                        timestamp: bgResponse.timestamp
+                    }))
+                };
+                await this.saveDocumentState();
+                console.log('Synced with background:', this.getResponseCount(), 'responses');
+                return true;
+            }
+        } catch (error) {
+            console.error('Failed to sync with background:', error);
+        }
+        return false;
     }
 
     addResponse(promptNumber, promptText, responseText) {
-        // Check if response already exists to prevent duplicates
+        const response = {
+            promptNumber,
+            promptText,
+            responseText,
+            timestamp: new Date().toISOString()
+        };
+
         const existingIndex = this.document.responses.findIndex(r => r.promptNumber === promptNumber);
-        
         if (existingIndex >= 0) {
-            // Update existing response
-            this.document.responses[existingIndex] = {
-                promptNumber,
-                promptText,
-                responseText,
-                timestamp: new Date().toISOString()
-            };
+            this.document.responses[existingIndex] = response;
         } else {
-            // Add new response
-            this.document.responses.push({
-                promptNumber,
-                promptText,
-                responseText,
-                timestamp: new Date().toISOString()
-            });
+            this.document.responses.push(response);
         }
 
-        // Sort responses by prompt number
         this.document.responses.sort((a, b) => a.promptNumber - b.promptNumber);
-
         this.saveDocumentState();
-    }
-
-
-
-    finalizeDocument(summary) {
-        this.document.summary = summary;
-        this.document.finalizedAt = new Date().toISOString();
-    }
-
-    hasResponses() {
-        return this.document.responses.length > 0;
     }
 
     getResponseCount() {
         return this.document.responses.length;
     }
 
+    hasResponses() {
+        return this.getResponseCount() > 0;
+    }
+
     clearDocument() {
-        this.document.responses = [];
-        this.document.summary = null;
-        this.clearDocumentState();
+        this.document = {
+            title: 'Perplexity AI Automation Results',
+            timestamp: null,
+            responses: [],
+            summary: null
+        };
+        this.saveDocumentState();
     }
 
-    generateTextDocument() {
-        let content = `${this.document.title}\n`;
-        content += `Generated: ${new Date(this.document.timestamp).toLocaleString()}\n`;
-        content += `Total Prompts: ${this.document.totalPrompts}\n`;
-        
-        if (this.document.summary) {
-            content += `Completed: ${this.document.summary.successful} successful, ${this.document.summary.failed} failed\n`;
-            content += `Success Rate: ${this.document.summary.successRate}%\n`;
-        }
-        
-        content += `${'='.repeat(80)}\n\n`;
+    finalizeDocument(summary) {
+        this.document.summary = summary;
+        this.saveDocumentState();
+    }
 
-        this.document.responses.forEach((response, index) => {
-            content += `PROMPT ${response.promptNumber}: ${response.promptText}\n\n`;
-            content += `RESPONSE ${response.promptNumber}:\n`;
-            content += `${response.responseText}\n\n`;
-            content += `${'='.repeat(80)}\n\n`;
-        });
-
-        if (this.document.summary) {
-            content += `\nAUTOMATION SUMMARY\n`;
-            content += `${'='.repeat(80)}\n`;
-            content += `Total Prompts: ${this.document.summary.total}\n`;
-            content += `Successful: ${this.document.summary.successful}\n`;
-            content += `Failed: ${this.document.summary.failed}\n`;
-            content += `Success Rate: ${this.document.summary.successRate}%\n`;
-            content += `With Responses: ${this.document.summary.withResponses}\n`;
-            content += `Response Rate: ${this.document.summary.responseRate}%\n`;
-            if (this.document.summary.duration) {
-                const duration = Math.round(this.document.summary.duration / 1000);
-                content += `Duration: ${duration} seconds\n`;
-            }
+    /**
+     * Generate and download DOCX with Microsoft Word formatting
+     * Follows screenshot specifications:
+     * - Index: Times New Roman, 12pt, underlined
+     * - H1: Aptos Display, 20pt, Heading style
+     * - H2: Aptos Display, 16pt, Strong style
+     */
+    async downloadDocx() {
+        if (!this.hasResponses()) {
+            alert('No responses to download');
+            return;
         }
 
-        return content;
-    }
-
-    downloadTxt() {
-      browser.runtime.sendMessage({ type: 'export-results', format: 'txt' });
-    }
-
-    downloadDocx() {
         try {
-            // Generate RTF content (can be opened as DOCX by Word)
-            const content = this.generateRichTextDocument();
-            const filename = `perplexity_automation_${Date.now()}.rtf`;
+            // Import docx library (ensure it's loaded)
+            if (typeof docx === 'undefined') {
+                throw new Error('DOCX library not loaded. Please include docx.js in your extension.');
+            }
 
-            // Create blob and download
-            const blob = new Blob([content], { type: 'application/rtf' });
+            const { Document, Paragraph, TextRun, Packer, HeadingLevel, AlignmentType, UnderlineType } = docx;
+
+            // Create document sections
+            const sections = [];
+
+            // Title Page
+            sections.push(
+                new Paragraph({
+                    children: [
+                        new TextRun({
+                            text: this.document.title,
+                            font: "Aptos Display",
+                            size: 40, // 20pt = 40 half-points
+                            bold: true
+                        })
+                    ],
+                    heading: HeadingLevel.HEADING_1,
+                    alignment: AlignmentType.CENTER,
+                    spacing: { after: 400 }
+                })
+            );
+
+            // Timestamp
+            if (this.document.timestamp) {
+                sections.push(
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `Generated: ${new Date(this.document.timestamp).toLocaleString()}`,
+                                font: "Aptos Display",
+                                size: 24, // 12pt
+                                italics: true
+                            })
+                        ],
+                        alignment: AlignmentType.CENTER,
+                        spacing: { after: 600 }
+                    })
+                );
+            }
+
+            // Table of Contents / Index
+            sections.push(
+                new Paragraph({
+                    children: [
+                        new TextRun({
+                            text: "Index",
+                            font: "Times New Roman",
+                            size: 24, // 12pt
+                            underline: {
+                                type: UnderlineType.SINGLE
+                            }
+                        })
+                    ],
+                    spacing: { before: 400, after: 200 }
+                })
+            );
+
+            // Index entries
+            this.document.responses.forEach((response, index) => {
+                sections.push(
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `${response.promptNumber}. ${response.promptText.substring(0, 80)}${response.promptText.length > 80 ? '...' : ''}`,
+                                font: "Times New Roman",
+                                size: 24 // 12pt
+                            })
+                        ],
+                        spacing: { after: 100 }
+                    })
+                );
+            });
+
+            // Page break before content
+            sections.push(
+                new Paragraph({
+                    children: [new TextRun({ text: "", break: 1 })],
+                    pageBreakBefore: true
+                })
+            );
+
+            // Main Content
+            this.document.responses.forEach((response, index) => {
+                // H1 - Question/Prompt heading
+                sections.push(
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `Question ${response.promptNumber}`,
+                                font: "Aptos Display",
+                                size: 40, // 20pt
+                                bold: true
+                            })
+                        ],
+                        heading: HeadingLevel.HEADING_1,
+                        spacing: { before: 600, after: 200 }
+                    })
+                );
+
+                // Prompt text
+                sections.push(
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: response.promptText,
+                                font: "Aptos Display",
+                                size: 24, // 12pt
+                                italics: true
+                            })
+                        ],
+                        spacing: { after: 300 }
+                    })
+                );
+
+                // H2 - Response heading
+                sections.push(
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: "Response",
+                                font: "Aptos Display",
+                                size: 32, // 16pt
+                                bold: true
+                            })
+                        ],
+                        heading: HeadingLevel.HEADING_2,
+                        spacing: { before: 400, after: 200 }
+                    })
+                );
+
+                // Response content - split into paragraphs
+                const responseLines = response.responseText.split('\n\n');
+                responseLines.forEach(line => {
+                    if (line.trim()) {
+                        sections.push(
+                            new Paragraph({
+                                children: [
+                                    new TextRun({
+                                        text: line.trim(),
+                                        font: "Aptos Display",
+                                        size: 22 // 11pt for body text
+                                    })
+                                ],
+                                spacing: { after: 200 }
+                            })
+                        );
+                    }
+                });
+
+                // Add spacing between questions
+                if (index < this.document.responses.length - 1) {
+                    sections.push(
+                        new Paragraph({
+                            children: [new TextRun({ text: "" })],
+                            spacing: { after: 400 }
+                        })
+                    );
+                }
+            });
+
+            // Summary section if available
+            if (this.document.summary) {
+                sections.push(
+                    new Paragraph({
+                        children: [new TextRun({ text: "", break: 1 })],
+                        pageBreakBefore: true
+                    })
+                );
+
+                sections.push(
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: "Summary",
+                                font: "Aptos Display",
+                                size: 40, // 20pt
+                                bold: true
+                            })
+                        ],
+                        heading: HeadingLevel.HEADING_1,
+                        spacing: { before: 400, after: 300 }
+                    })
+                );
+
+                sections.push(
+                    new Paragraph({
+                        children: [
+                            new TextRun({
+                                text: `Total Prompts: ${this.document.summary.total || this.document.responses.length}`,
+                                font: "Aptos Display",
+                                size: 24
+                            })
+                        ],
+                        spacing: { after: 100 }
+                    })
+                );
+
+                if (this.document.summary.successful !== undefined) {
+                    sections.push(
+                        new Paragraph({
+                            children: [
+                                new TextRun({
+                                    text: `Successful: ${this.document.summary.successful}`,
+                                    font: "Aptos Display",
+                                    size: 24
+                                })
+                            ],
+                            spacing: { after: 100 }
+                        })
+                    );
+                }
+
+                if (this.document.summary.successRate) {
+                    sections.push(
+                        new Paragraph({
+                            children: [
+                                new TextRun({
+                                    text: `Success Rate: ${this.document.summary.successRate}%`,
+                                    font: "Aptos Display",
+                                    size: 24
+                                })
+                            ],
+                            spacing: { after: 100 }
+                        })
+                    );
+                }
+            }
+
+            // Create the document
+            const doc = new Document({
+                sections: [{
+                    properties: {},
+                    children: sections
+                }]
+            });
+
+            // FIXED: Generate and download using Blob (browser-compatible)
+            const blob = await Packer.toBlob(doc);
+
             const url = URL.createObjectURL(blob);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `perplexity-automation-${timestamp}.docx`;
 
-            // Create a temporary download link
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = filename;
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-
-            // Clean up
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            console.log('RTF document downloaded successfully');
+            console.log('DOCX downloaded successfully:', filename);
+
         } catch (error) {
-            console.error('Failed to download RTF document:', error);
+            console.error('Failed to generate DOCX:', error);
+            alert('Failed to generate DOCX file: ' + error.message);
         }
     }
-
-    generateRichTextDocument() {
-        // Generate RTF format which can be opened by Word
-        let rtf = '{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Times New Roman;}}';
-        
-        // Title
-        rtf += '{\\f0\\fs28\\b ' + this.document.title + '}\\par\\par';
-        
-        // Metadata
-        rtf += '{\\f0\\fs20 Generated: ' + new Date(this.document.timestamp).toLocaleString() + '}\\par';
-        rtf += '{\\f0\\fs20 Total Prompts: ' + this.document.totalPrompts + '}\\par\\par';
-        
-        if (this.document.summary) {
-            rtf += '{\\f0\\fs20 Completed: ' + this.document.summary.successful + ' successful, ' + this.document.summary.failed + ' failed}\\par';
-            rtf += '{\\f0\\fs20 Success Rate: ' + this.document.summary.successRate + '%}\\par\\par';
-        }
-
-        // Responses
-        this.document.responses.forEach((response) => {
-            rtf += '{\\f0\\fs22\\b PROMPT ' + response.promptNumber + ':}\\par';
-            rtf += '{\\f0\\fs20 ' + this.escapeRtf(response.promptText) + '}\\par\\par';
-            rtf += '{\\f0\\fs22\\b RESPONSE ' + response.promptNumber + ':}\\par';
-            rtf += '{\\f0\\fs20 ' + this.escapeRtf(response.responseText) + '}\\par\\par';
-            rtf += '\\line\\par';
-        });
-
-        rtf += '}';
-        return rtf;
-    }
-
-    escapeRtf(text) {
-        return text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}');
-    }
-
-    // NEW METHOD: Sync with background document manager
-    async syncWithBackground() {
-        try {
-            // Get the latest from background
-            const response = await browser.runtime.sendMessage({ type: 'get-document-data' });
-            if (response && response.document && response.document.responses.length > 0) {
-                // Map background document structure to popup document structure
-                this.document = {
-                    ...response.document,
-                    responses: response.document.responses.map(bgResponse => ({
-                        promptNumber: bgResponse.index + 1, // Convert 0-based index to 1-based prompt number
-                        promptText: bgResponse.prompt,
-                        responseText: bgResponse.response,
-                        timestamp: bgResponse.timestamp
-                    }))
-                };
-                console.log('Synced with background document:', this.getResponseCount(), 'responses');
-
-                // Save locally as well
-                await browser.storage.local.set({ documentData: this.document });
-                return true;
-            }
-
-            return false;
-        } catch (error) {
-            console.error('Failed to sync with background:', error);
-            return false;
-        }
-    }
-
-
 }
+
 
 // Initialize the automator
 window.automator = new PerplexityAutomator();

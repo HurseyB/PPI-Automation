@@ -47,7 +47,8 @@
   "web_accessible_resources": [
     "popup.html",
     "popup.css",
-    "popup.js"
+    "popup.js",
+    "lib/docx.min.js"
   ],
   
   "author": "Developer",
