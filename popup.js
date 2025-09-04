@@ -29,7 +29,9 @@ class PerplexityAutomator {
         this.prompts = [];
         this.isRunning = false;
         this.collapsedAll = false;
-        this.documentManager = new DocumentManager(); // NEW: Document management
+        this.documentManager = new DocumentManager(); // Document management
+        // Store the current company name in DocumentManager
+        this.documentManager.companyName = '';
         this.initializeElements();
         this.initializeNotificationSettings();
         this.bindEventListeners();
@@ -60,6 +62,7 @@ class PerplexityAutomator {
             // Restore Company Name
             if (state.companyName !== undefined && this.companyNameInput) {
                 this.companyNameInput.value = state.companyName;
+                this.documentManager.companyName = state.companyName;     // ← propagate to DocumentManager
             }
 
             // Restore document data FIRST if it exists, but prioritize background sync
@@ -228,7 +231,12 @@ class PerplexityAutomator {
       }
 
       // Document management events
-      this.downloadDocxBtn.addEventListener('click', () => this.documentManager.downloadDocx());
+      this.downloadDocxBtn.addEventListener('click', () => {
+          // 1. Capture and store the company name before downloading
+          const raw = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+          this.documentManager.companyName = raw || 'Company';
+          this.documentManager.downloadDocx();
+      });
       this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
       // Automation controls
@@ -731,6 +739,7 @@ class PerplexityAutomator {
  */
 class DocumentManager {
     constructor() {
+        this.companyName = 'Company';
         this.document = {
             title: 'Perplexity AI Automation Results',
             timestamp: null,
@@ -852,9 +861,19 @@ class DocumentManager {
                 }
             });
 
-            // Download the file
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const filename = `perplexity-automation-${timestamp}.docx`;
+            // 1. Get company name and sanitize
+            const safeName = this.companyName
+                .replace(/[<>:"\/\|?*\x00-\x1F]/g, '')
+                .replace(/\s+/g, '-');
+
+            // 2. Format date/time as MM.DD.YYYY-HH.MM.SS
+            const now = new Date();
+            const pad2 = n => String(n).padStart(2,'0');
+            const datePart = `${pad2(now.getMonth()+1)}.${pad2(now.getDate())}.${now.getFullYear()}`;
+            const timePart = `${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}`;
+
+            // 3. Build filename
+            const filename = `${safeName}-${datePart}-${timePart}.docx`;
 
             const url = URL.createObjectURL(docxBlob);
             const a = document.createElement('a');
