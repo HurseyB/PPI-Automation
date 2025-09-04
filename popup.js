@@ -32,6 +32,7 @@ class PerplexityAutomator {
         this.initializeElements();
         this.initializeNotificationSettings();
         this.bindEventListeners();
+        this.setupPromptListEventHandlers();
         this.loadPrompts();
     // ADDED: Load document manager state first
         // ENHANCED: Load document manager state with background sync
@@ -249,6 +250,30 @@ class PerplexityAutomator {
         if (this.enableNotifications) {
           this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
         }
+    }
+
+    setupPromptListEventHandlers() {
+        // Use event delegation for dynamically created prompt buttons
+        this.promptsList.addEventListener('click', async (event) => {
+            const button = event.target.closest('button[data-action]');
+            if (!button) return;
+
+            event.stopPropagation(); // Prevent triggering the prompt expansion
+
+            const action = button.dataset.action;
+            const index = parseInt(button.dataset.index);
+
+            try {
+                if (action === 'edit') {
+                    await this.editPrompt(index);
+                } else if (action === 'delete') {
+                    await this.deletePrompt(index);
+                }
+            } catch (error) {
+                console.error(`Error performing ${action} action:`, error);
+                this.showNotification(`Error: Could not ${action} prompt`, 'error');
+            }
+        });
     }
 
     setupMessageListener() {
@@ -567,6 +592,9 @@ class PerplexityAutomator {
             this.pauseAutomationBtn.style.display = 'none';
             this.resumeAutomationBtn.style.display = 'none';
         }
+        if (this.prompts.length > 0) {
+            this.renderPrompts();
+        }
     }
 
     validateInput() {
@@ -703,8 +731,8 @@ class PerplexityAutomator {
                     <span class="prompt-number">#{index + 1}</span>
                     <span class="prompt-preview">${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}</span>
                     <div class="prompt-actions" onclick="event.stopPropagation()">
-                        <button class="btn btn-edit" onclick="window.automator.editPrompt(${index})" title="Edit">✏️</button>
-                        <button class="btn btn-delete" onclick="window.automator.deletePrompt(${index})" title="Delete">🗑️</button>
+                        <button class="btn btn-edit" data-action="edit" data-index="${index}" title="Edit" ${this.isRunning ? 'disabled' : ''}>✏️</button>
+                        <button class="btn btn-delete" data-action="delete" data-index="${index}" title="Delete" ${this.isRunning ? 'disabled' : ''}>🗑️</button>
                     </div>
                 </div>
                 <div class="prompt-content">
@@ -715,6 +743,12 @@ class PerplexityAutomator {
     }
 
     async editPrompt(index) {
+        // Prevent editing during automation
+        if (this.isRunning) {
+            alert('Cannot edit prompts while automation is running. Please stop the automation first.');
+            return;
+        }
+
         const newText = prompt('Edit prompt:', this.prompts[index]);
         if (newText !== null && newText.trim()) {
             this.prompts[index] = newText.trim();
@@ -724,6 +758,12 @@ class PerplexityAutomator {
     }
 
     async deletePrompt(index) {
+        // Prevent deleting during automation
+        if (this.isRunning) {
+            alert('Cannot delete prompts while automation is running. Please stop the automation first.');
+            return;
+        }
+
         if (confirm('Delete this prompt?')) {
             this.prompts.splice(index, 1);
             await this.savePrompts();
