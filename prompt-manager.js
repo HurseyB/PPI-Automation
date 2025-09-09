@@ -557,7 +557,7 @@ class PromptManager {
       // 2. Clear existing list
       this.promptsList.innerHTML = '';
 
-      // 3. Render each prompt item with “Pause After” checkbox
+      // 3. Handle empty state
       if (this.prompts.length === 0) {
         this.promptsList.innerHTML = `
           <div class="empty-state">
@@ -568,63 +568,62 @@ class PromptManager {
       }
 
       // 4. Generate each prompt item
-      this.prompts.forEach((prompt, index) => {
-          const item = document.createElement('div');
-          item.className = 'prompt-item';
+      this.prompts.forEach((promptObj, index) => {
+        // Create container
+        const item = document.createElement('div');
+        item.className = 'prompt-item';
+        item.innerHTML = `
 
-          // Pause After checkbox
-          const pauseLabel = document.createElement('label');
-          pauseLabel.className = 'pause-after-label';
-          const pauseCheckbox = document.createElement('input');
-          pauseCheckbox.type = 'checkbox';
-          pauseCheckbox.checked = !!prompt.pauseAfter;
-          pauseCheckbox.addEventListener('change', () => {
-              this.prompts[index].pauseAfter = pauseCheckbox.checked;
-              this.prompts[index].modified = new Date().toISOString();
-              this.savePrompts();
-          });
-          pauseLabel.appendChild(pauseCheckbox);
-          pauseLabel.appendChild(document.createTextNode('Pause After'));
-          item.appendChild(pauseLabel);
+        `;
 
-          // Drag handle + prompt number
-          const dragHandle = document.createElement('span');
-          dragHandle.className = 'drag-handle';
-          dragHandle.textContent = '⋮⋮';
-          item.appendChild(dragHandle);
+        // Header: drag-handle, number, preview
+        const header = document.createElement('div');
+        header.className = 'prompt-header';
+        header.innerHTML = `
+          <div class="prompt-header">
+          <input type="checkbox" class="prompt-checkbox" data-index="${index}">
+          <span class="drag-handle">⋮⋮</span>
+          <span class="prompt-number">${index + 1}.</span>
+          <span class="prompt-preview">${promptObj.text}</span>
+          <div class="prompt-actions">
+            <button class="btn btn-text btn-edit" title="Edit prompt">✏️</button>
+            <button class="btn btn-text btn-delete" title="Delete prompt">🗑️</button>
+            <label class="setting-label">
+              <input type="checkbox" class="pause-after-checkbox" data-index="${index}" ${prompt.pauseAfter ? 'checked' : ''}>
+              <span>Pause After</span>
+            </label>
+          </div>`;
+        item.appendChild(header);
 
-          const number = document.createElement('span');
-          number.className = 'prompt-number';
-          number.textContent = `${index+1}.`;
-          item.appendChild(number);
+        // Optional: Expanded content (hidden by default)
+        const content = document.createElement('div');
+        content.className = 'prompt-content';
+        content.innerHTML = `<div class="prompt-text">${promptObj.text}</div>`;
+        item.appendChild(content);
 
-          // Prompt text preview
-          const preview = document.createElement('span');
-          preview.className = 'prompt-preview';
-          preview.textContent = prompt.text;
-          item.appendChild(preview);
+        // 5. Bind action listeners
+        // Edit button
+        header.querySelector('.btn-edit').addEventListener('click', () => {
+          this.editPrompt(index);
+        });
 
-          // Edit/Delete buttons
-          const actions = document.createElement('div');
-          actions.className = 'prompt-actions';
-          const editBtn = document.createElement('button');
-          editBtn.className = 'btn-edit';
-          editBtn.textContent = '✏️';
-          editBtn.title = 'Edit';
-          editBtn.addEventListener('click', () => this.editPrompt(index));
-          const delBtn = document.createElement('button');
-          delBtn.className = 'btn-delete';
-          delBtn.textContent = '🗑️';
-          delBtn.title = 'Delete';
-          delBtn.addEventListener('click', () => this.deletePrompt(index));
-          actions.appendChild(editBtn);
-          actions.appendChild(delBtn);
-          item.appendChild(actions);
+        // Delete button
+        header.querySelector('.btn-delete').addEventListener('click', () => {
+          this.deletePrompt(index);
+        });
 
-          // Enable drag-and-drop on this item
-          this.setupDragAndDrop(item, index);
+        // 6. Setup drag-and-drop (existing method)
+        this.setupDragAndDrop(item, index);
 
-          this.promptsList.appendChild(item);
+        // 7. Append to list
+        this.promptsList.appendChild(item);
+        // Bind pause-after toggle
+        const checkbox = item.querySelector('.pause-after-checkbox');
+        checkbox.addEventListener('change', () => {
+          this.prompts[index].pauseAfter = checkbox.checked;
+          this.prompts[index].modified = new Date().toISOString();
+          this.savePrompts();
+        });
       });
     }
 
