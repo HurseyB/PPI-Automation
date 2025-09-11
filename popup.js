@@ -64,7 +64,14 @@ class PerplexityAutomator {
                   }))
                 };
                 this.documentManager.companyName = response.companyName || this.documentManager.companyName;
+                this.documentManager.updateDocumentTitle();
                 this.documentManager.saveDocumentState();
+
+                // ✅ ADD: Also update the input field if we have a stored company name
+                if (response.companyName && response.companyName !== 'Company' && this.companyNameInput) {
+                    this.companyNameInput.value = response.companyName;
+                    console.log('Restored company name from background:', response.companyName);
+                }
               }
             }
 
@@ -280,22 +287,71 @@ class PerplexityAutomator {
 
       // Document management events
       this.downloadDocxBtn.addEventListener('click', async () => {
-        // Capture the user-entered company name
-        const name = this.companyNameInput ? this.companyNameInput.value.trim() : 'Company';
-        // Persist per-tab company name in background
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-        await browser.runtime.sendMessage({
-            type: 'set-tab-company-name',
-            tabId: tab.id,
-            companyName: name
-        });
-        // Store in this DocumentManager instance
-        this.documentManager.companyName = name || 'Company';
-        // Download using updated manager state
-        this.documentManager.downloadDocx();
+          console.log('=== DOWNLOAD DEBUG START ===');
+
+          // Get tab and background data
+          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+          const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
+
+          // Get UI state (this is where the real company name is stored!)
+          const uiState = await browser.storage.local.get('popupUIState');
+          const uiCompanyName = uiState.popupUIState?.companyName;
+          console.log('UI State company name:', uiCompanyName);
+
+          // Get other sources
+          const storedName = tabData?.companyName;
+          const inputName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+
+          let finalName = 'Company';
+
+          // ✅ PRIORITY 1: UI State (has the correct name from automation)
+          if (uiCompanyName && uiCompanyName !== 'Company') {
+              finalName = uiCompanyName;
+              console.log('Using UI state company name:', finalName);
+          }
+          // Priority 2: Background stored name
+          else if (storedName && storedName !== 'Company') {
+              finalName = storedName;
+              console.log('Using background name:', finalName);
+          }
+          // Priority 3: Input field
+          else if (inputName && inputName !== 'Company') {
+              finalName = inputName;
+              console.log('Using input name:', finalName);
+          }
+
+          console.log('=== Final name decision:', finalName, '===');
+
+          // Update everything
+          this.documentManager.companyName = finalName;
+          this.documentManager.updateDocumentTitle();
+
+          // Update input field to show what we're using
+          if (this.companyNameInput) {
+              this.companyNameInput.value = finalName;
+          }
+
+          // Save to background
+          await browser.runtime.sendMessage({
+              type: 'set-tab-company-name',
+              tabId: tab.id,
+              companyName: finalName
+          });
+
+          console.log('=== DOWNLOAD DEBUG END ===');
+
+          // Download
+          this.documentManager.downloadDocx();
       });
       this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
+
+      // ✅ TEMPORARY: Add debug trigger (double-click company input field)
+      if (this.companyNameInput) {
+          this.companyNameInput.addEventListener('dblclick', () => {
+              this.debugCompanyName();
+          });
+      }
       // Automation controls
       this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
       this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
@@ -313,6 +369,9 @@ class PerplexityAutomator {
           // Get current tab and update title immediately
           const companyName = this.companyNameInput.value.trim();
 
+          this.documentManager.companyName = companyName || 'Company';
+          this.documentManager.updateDocumentTitle();
+
           // Update tab title in real-time
           await this.updateTabTitle(companyName);
 
@@ -328,6 +387,33 @@ class PerplexityAutomator {
           });
         });
       }
+    }
+
+    // ✅ ADD THIS DEBUG METHOD (for testing)
+    async debugCompanyName() {
+        console.log('=== COMPANY NAME SOURCES DEBUG ===');
+
+        try {
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
+
+            console.log('1. Tab ID:', tab.id);
+            console.log('2. Background tabData:', tabData);
+            console.log('3. Background companyName:', tabData?.companyName);
+            console.log('4. Document manager companyName:', this.documentManager.companyName);
+            console.log('5. Document title:', this.documentManager.document.title);
+            console.log('6. Input field value:', this.companyNameInput?.value);
+            console.log('7. Response count:', this.documentManager.getResponseCount());
+
+            // Check UI state
+            const uiState = await browser.storage.local.get('popupUIState');
+            console.log('8. UI State companyName:', uiState.popupUIState?.companyName);
+
+        } catch (error) {
+            console.error('Debug error:', error);
+        }
+
+        console.log('=== END DEBUG ===');
     }
 
     // NEW: Update tab title helper function
@@ -760,6 +846,8 @@ class PerplexityAutomator {
             }
 
             const companyName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+            this.documentManager.companyName = companyName || 'Company';
+            this.documentManager.updateDocumentTitle(); // ← ADD THIS LINE
             // Update tab title when starting automation
             if (companyName) {
               await this.updateTabTitle(companyName);
@@ -936,7 +1024,7 @@ class DocumentManager {
         this.companyName = 'Company';
         this.tabId = null; // Track which tab this belongs to
         this.document = {
-            title: 'Perplexity AI Automation Results',
+            title: `Business Analyses for ${this.companyName}`,
             timestamp: null,
             responses: [],
             summary: null
@@ -1033,7 +1121,7 @@ class DocumentManager {
 
     clearDocument() {
         this.document = {
-            title: 'Perplexity AI Automation Results',
+            title: `Business Analyses for ${this.companyName}`,
             timestamp: null,
             responses: [],
             summary: null
@@ -1103,6 +1191,11 @@ class DocumentManager {
             console.log('Falling back to plain text method');
             return this.downloadDocxPlainText();
         }
+    }
+
+    updateDocumentTitle() {
+        this.document.title = `Business Analyses for ${this.companyName}`;
+        this.saveDocumentState();
     }
 
     /**
