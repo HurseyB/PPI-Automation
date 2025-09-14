@@ -1148,7 +1148,7 @@ class DocumentManager {
             }
 
             // Build HTML document structure
-            const htmlContent = this.generateHTMLDocument();
+            const htmlContent = await this.generateHTMLDocument();
 
             // Convert HTML to DOCX using html-docx library
             const docxBlob = htmlDocx.asBlob(htmlContent, {
@@ -1199,11 +1199,39 @@ class DocumentManager {
     }
 
     /**
+     * Load brand icon as base64 data URL
+     * @returns {Promise<string>} Base64 data URL of the icon
+     */
+    async loadBrandIcon() {
+        try {
+            const iconUrl = browser.runtime.getURL('icons/logo-icon.png');
+            const response = await fetch(iconUrl);
+
+            if (!response.ok) {
+                throw new Error(`Failed to load icon: ${response.status}`);
+            }
+
+            const blob = await response.blob();
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        } catch (error) {
+            console.warn('Failed to load brand icon:', error);
+            return null; // Return null if icon fails to load
+        }
+    }
+
+    /**
      * NEW METHOD: Generate structured HTML document
      * Add this new method to the DocumentManager class
      */
-    generateHTMLDocument() {
+    async generateHTMLDocument() {
         const title = this.document.title;
+
+        const iconDataUrl = await this.loadBrandIcon();
         // Explicitly build "dd Month yyyy" to ensure correct order
         const now = new Date();
         const day = String(now.getDate()).padStart(2, '0');
@@ -1224,6 +1252,14 @@ class DocumentManager {
                     line-height: 1.5;
                     color: #000000;
                 }
+                .brand-icon {
+                                position: absolute;
+                                top: 0;
+                                left: 0;
+                                width: 60px;
+                                height: auto;
+                                z-index: 10;
+                            }
                 .response-content {
                     font-family: 'Times New Roman', serif;
                     margin-bottom: 12pt;
@@ -1258,7 +1294,10 @@ class DocumentManager {
             </style>
         </head>
         <body>
-            <br style="font-size: 20pt;"></br>
+            <div class="header-container">
+                ${iconDataUrl ? `<img src="${iconDataUrl}" alt="Brand Logo" class="brand-icon">` : ''}
+                </div>
+            </div>
             <br style="font-size: 20pt;"></br>
             <br style="font-size: 20pt;"></br>
             <br style="font-size: 20pt;"></br>
