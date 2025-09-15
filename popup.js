@@ -1,6 +1,6 @@
 /**
  * Enhanced Perplexity AI Automator - Popup Script with Document Management
- * Added: Document management system for collecting and downloading responses
+ * Modified: DocumentManager class moved to background.js, replaced with DocumentManagerBridge
  */
 
 class PerplexityAutomator {
@@ -21,58 +21,61 @@ class PerplexityAutomator {
     }
 
     async loadUIState() {
-      const result = await browser.storage.local.get('popupUIState');
-      return result.popupUIState || null;
+        const result = await browser.storage.local.get('popupUIState');
+        return result.popupUIState || null;
     }
 
     constructor() {
         this.prompts = [];
         this.isRunning = false;
         this.collapsedAll = false;
-        this.documentManager = new DocumentManager(); // Document management
+
+        // MODIFIED: Replace DocumentManager with DocumentManagerBridge
+        this.documentManager = new DocumentManagerBridge(); // Document management bridge
+
         // Initialize company name in DocumentManager (populated from tab state or UI state)
         this.documentManager.companyName = '';
         // NEW: Set current tab ID for document manager
         browser.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-          this.documentManager.setTabId(tab.id);
+            this.documentManager.setTabId(tab.id);
         });
         this.initializeElements();
         this.initializeNotificationSettings();
         this.bindEventListeners();
         this.loadPrompts();
-    // ADDED: Load document manager state first
+        // ADDED: Load document manager state first
         // ENHANCED: Load document manager state with background sync
         this.documentManager.loadDocumentState().then(async () => {
             // Try to sync with background if no data locally
             if (!this.documentManager.hasResponses()) {
-              // Sync only for current active tab
-              const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-              // Ensure document manager has the correct tab ID
-              this.documentManager.setTabId(tab.id);
-              const response = await browser.runtime.sendMessage({
-                type: 'get-tab-document-data',
-                tabId: tab.id
-              });
-              if (response && response.document && response.document.responses.length > 0) {
-                this.documentManager.document = {
-                  ...response.document,
-                  responses: response.document.responses.map(bg => ({
-                    promptNumber: bg.index + 1,
-                    promptText: bg.prompt,
-                    responseText: bg.response,
-                    timestamp: bg.timestamp
-                  }))
-                };
-                this.documentManager.companyName = response.companyName || this.documentManager.companyName;
-                this.documentManager.updateDocumentTitle();
-                this.documentManager.saveDocumentState();
+                // Sync only for current active tab
+                const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+                // Ensure document manager has the correct tab ID
+                this.documentManager.setTabId(tab.id);
+                const response = await browser.runtime.sendMessage({
+                    type: 'get-tab-document-data',
+                    tabId: tab.id
+                });
+                if (response && response.document && response.document.responses.length > 0) {
+                    this.documentManager._cachedDocument = {
+                        ...response.document,
+                        responses: response.document.responses.map(bg => ({
+                            promptNumber: bg.index + 1,
+                            promptText: bg.prompt,
+                            responseText: bg.response,
+                            timestamp: bg.timestamp
+                        }))
+                    };
+                    this.documentManager.companyName = response.companyName || this.documentManager.companyName;
+                    this.documentManager.updateDocumentTitle();
+                    // No need to saveDocumentState as it's handled by background
 
-                // ✅ ADD: Also update the input field if we have a stored company name
-                if (response.companyName && response.companyName !== 'Company' && this.companyNameInput) {
-                    this.companyNameInput.value = response.companyName;
-                    console.log('Restored company name from background:', response.companyName);
+                    // ✅ ADD: Also update the input field if we have a stored company name
+                    if (response.companyName && response.companyName !== 'Company' && this.companyNameInput) {
+                        this.companyNameInput.value = response.companyName;
+                        console.log('Restored company name from background:', response.companyName);
+                    }
                 }
-              }
             }
 
             this.updateResponseCount();
@@ -87,7 +90,7 @@ class PerplexityAutomator {
         });
 
 
-        this.loadUIState().then(async state => {  // <- ADD 'async' HERE
+        this.loadUIState().then(async state => { // <- ADD 'async' HERE
             if (!state) return;
 
             // Retrieve tab-specific company name from background or UI state
@@ -116,7 +119,7 @@ class PerplexityAutomator {
                     if (state.documentData.document.responses.length > 0 &&
                         state.documentData.document.responses[0].prompt !== undefined) {
                         // UI state has background structure, need to map it
-                        this.documentManager.document = {
+                        this.documentManager._cachedDocument = {
                             ...state.documentData.document,
                             responses: state.documentData.document.responses.map(bgResponse => ({
                                 promptNumber: bgResponse.index + 1,
@@ -127,7 +130,7 @@ class PerplexityAutomator {
                         };
                     } else {
                         // UI state already has correct structure
-                        this.documentManager.document = state.documentData.document;
+                        this.documentManager._cachedDocument = state.documentData.document;
                     }
                     console.log('Document data restored from UI state:', this.documentManager.getResponseCount(), 'responses');
                 }
@@ -156,8 +159,8 @@ class PerplexityAutomator {
 
                 // Set status class
                 const cls = state.documentStatus === 'Document ready for download' ? 'status status--success' :
-                            state.documentStatus === 'collecting' ? 'status status--info' :
-                            'status status--partial';
+                    state.documentStatus === 'collecting' ? 'status status--info' :
+                        'status status--partial';
                 this.documentStatus.className = cls;
 
                 // NEW: Restore log messages if they exist
@@ -180,85 +183,85 @@ class PerplexityAutomator {
     }
 
     initializeElements() {
-      // Only keep elements that exist in simplified popup
-      this.openPromptManagerBtn = document.getElementById('openPromptManagerBtn');
-      this.promptCount = document.getElementById('promptCount');
+        // Only keep elements that exist in simplified popup
+        this.openPromptManagerBtn = document.getElementById('openPromptManagerBtn');
+        this.promptCount = document.getElementById('promptCount');
 
-      // Document management elements
-      this.downloadDocxBtn = document.getElementById('downloadDocxBtn');
-      this.clearDocumentBtn = document.getElementById('clearDocumentBtn');
-      this.documentStatus = document.getElementById('documentStatus');
-      this.responseCount = document.getElementById('responseCount');
+        // Document management elements
+        this.downloadDocxBtn = document.getElementById('downloadDocxBtn');
+        this.clearDocumentBtn = document.getElementById('clearDocumentBtn');
+        this.documentStatus = document.getElementById('documentStatus');
+        this.responseCount = document.getElementById('responseCount');
 
-      // Automation elements
-      this.startAutomationBtn = document.getElementById('startAutomationBtn');
-      this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
-      this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
-      this.resetAutomationBtn = document.getElementById('resetAutomationBtn');
-      this.runningControls = document.querySelector('.running-controls');
-      this.companyNameInput = document.getElementById('companyNameInput');
+        // Automation elements
+        this.startAutomationBtn = document.getElementById('startAutomationBtn');
+        this.pauseAutomationBtn = document.getElementById('pauseAutomationBtn');
+        this.resumeAutomationBtn = document.getElementById('resumeAutomationBtn');
+        this.resetAutomationBtn = document.getElementById('resetAutomationBtn');
+        this.runningControls = document.querySelector('.running-controls');
+        this.companyNameInput = document.getElementById('companyNameInput');
 
-      // Progress elements (these don't exist in popup, but needed for compatibility)
-      this.progressText = null;
-      this.progressFill = null;
-      this.currentPrompt = null;
-      this.automationLog = null;
+        // Progress elements (these don't exist in popup, but needed for compatibility)
+        this.progressText = null;
+        this.progressFill = null;
+        this.currentPrompt = null;
+        this.automationLog = null;
 
-      // Initialize notification elements
-      this.enableNotifications = document.getElementById('enableNotifications');
+        // Initialize notification elements
+        this.enableNotifications = document.getElementById('enableNotifications');
 
-      // Log missing elements for debugging
+        // Log missing elements for debugging
         if (!this.resetAutomationBtn) {
-          console.warn('resetAutomationBtn element not found in DOM');
+            console.warn('resetAutomationBtn element not found in DOM');
         }
         if (!this.runningControls) {
-          console.warn('runningControls element not found in DOM');
+            console.warn('runningControls element not found in DOM');
         }
     }
 
 
     initializeNotificationSettings() {
-      // Initialize notification elements
-      this.enableNotifications = document.getElementById('enableNotifications');
+        // Initialize notification elements
+        this.enableNotifications = document.getElementById('enableNotifications');
 
-      // Load notification settings
-      this.loadNotificationSettings();
+        // Load notification settings
+        this.loadNotificationSettings();
     }
 
     async loadNotificationSettings() {
-      try {
-        const result = await browser.storage.local.get(['notificationSettings']);
-        const settings = result.notificationSettings || { enabled: true };
+        try {
+            const result = await browser.storage.local.get(['notificationSettings']);
+            const settings = result.notificationSettings || { enabled: true };
 
-        if (this.enableNotifications) {
-          this.enableNotifications.checked = settings.enabled;
+            if (this.enableNotifications) {
+                this.enableNotifications.checked = settings.enabled;
+            }
+        } catch (error) {
+            console.error('Failed to load notification settings:', error);
         }
-      } catch (error) {
-        console.error('Failed to load notification settings:', error);
-      }
     }
 
     async saveNotificationSettings() {
-      try {
-        const settings = {
-          enabled: this.enableNotifications ? this.enableNotifications.checked : true
-        };
+        try {
+            const settings = {
+                enabled: this.enableNotifications ? this.enableNotifications.checked : true
+            };
 
-        await browser.storage.local.set({ notificationSettings: settings });
+            await browser.storage.local.set({ notificationSettings: settings });
 
-        // Send updated settings to background script
-        browser.runtime.sendMessage({
-          type: 'update-notification-settings',
-          settings: settings
-        });
+            // Send updated settings to background script
+            browser.runtime.sendMessage({
+                type: 'update-notification-settings',
+                settings: settings
+            });
 
-        // If user just enabled notifications, request permission
-        if (settings.enabled) {
-          await this.requestNotificationPermission();
+            // If user just enabled notifications, request permission
+            if (settings.enabled) {
+                await this.requestNotificationPermission();
+            }
+        } catch (error) {
+            console.error('Failed to save notification settings:', error);
         }
-      } catch (error) {
-        console.error('Failed to save notification settings:', error);
-      }
     }
 
     async requestNotificationPermission() {
@@ -280,113 +283,113 @@ class PerplexityAutomator {
 
 
     bindEventListeners() {
-      // Open prompt manager
-      if (this.openPromptManagerBtn) {
-        this.openPromptManagerBtn.addEventListener('click', () => this.openPromptManager());
-      }
+        // Open prompt manager
+        if (this.openPromptManagerBtn) {
+            this.openPromptManagerBtn.addEventListener('click', () => this.openPromptManager());
+        }
 
-      // Document management events
-      this.downloadDocxBtn.addEventListener('click', async () => {
-          console.log('=== DOWNLOAD DEBUG START ===');
+        // Document management events
+        this.downloadDocxBtn.addEventListener('click', async () => {
+            console.log('=== DOWNLOAD DEBUG START ===');
 
-          // Get tab and background data
-          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-          const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
+            // Get tab and background data
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
 
-          // Get UI state (this is where the real company name is stored!)
-          const uiState = await browser.storage.local.get('popupUIState');
-          const uiCompanyName = uiState.popupUIState?.companyName;
-          console.log('UI State company name:', uiCompanyName);
+            // Get UI state (this is where the real company name is stored!)
+            const uiState = await browser.storage.local.get('popupUIState');
+            const uiCompanyName = uiState.popupUIState?.companyName;
+            console.log('UI State company name:', uiCompanyName);
 
-          // Get other sources
-          const storedName = tabData?.companyName;
-          const inputName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+            // Get other sources
+            const storedName = tabData?.companyName;
+            const inputName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
 
-          let finalName = 'Company';
+            let finalName = 'Company';
 
-          // ✅ PRIORITY 1: UI State (has the correct name from automation)
-          if (uiCompanyName && uiCompanyName !== 'Company') {
-              finalName = uiCompanyName;
-              console.log('Using UI state company name:', finalName);
-          }
-          // Priority 2: Background stored name
-          else if (storedName && storedName !== 'Company') {
-              finalName = storedName;
-              console.log('Using background name:', finalName);
-          }
-          // Priority 3: Input field
-          else if (inputName && inputName !== 'Company') {
-              finalName = inputName;
-              console.log('Using input name:', finalName);
-          }
+            // ✅ PRIORITY 1: UI State (has the correct name from automation)
+            if (uiCompanyName && uiCompanyName !== 'Company') {
+                finalName = uiCompanyName;
+                console.log('Using UI state company name:', finalName);
+            }
+            // Priority 2: Background stored name
+            else if (storedName && storedName !== 'Company') {
+                finalName = storedName;
+                console.log('Using background name:', finalName);
+            }
+            // Priority 3: Input field
+            else if (inputName && inputName !== 'Company') {
+                finalName = inputName;
+                console.log('Using input name:', finalName);
+            }
 
-          console.log('=== Final name decision:', finalName, '===');
+            console.log('=== Final name decision:', finalName, '===');
 
-          // Update everything
-          this.documentManager.companyName = finalName;
-          this.documentManager.updateDocumentTitle();
+            // Update everything
+            this.documentManager.companyName = finalName;
+            this.documentManager.updateDocumentTitle();
 
-          // Update input field to show what we're using
-          if (this.companyNameInput) {
-              this.companyNameInput.value = finalName;
-          }
+            // Update input field to show what we're using
+            if (this.companyNameInput) {
+                this.companyNameInput.value = finalName;
+            }
 
-          // Save to background
-          await browser.runtime.sendMessage({
-              type: 'set-tab-company-name',
-              tabId: tab.id,
-              companyName: finalName
-          });
+            // Save to background
+            await browser.runtime.sendMessage({
+                type: 'set-tab-company-name',
+                tabId: tab.id,
+                companyName: finalName
+            });
 
-          console.log('=== DOWNLOAD DEBUG END ===');
+            console.log('=== DOWNLOAD DEBUG END ===');
 
-          // Download
-          this.documentManager.downloadDocx();
-      });
-      this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
-
-
-      // ✅ TEMPORARY: Add debug trigger (double-click company input field)
-      if (this.companyNameInput) {
-          this.companyNameInput.addEventListener('dblclick', () => {
-              this.debugCompanyName();
-          });
-      }
-      // Automation controls
-      this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
-      this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
-      this.resumeAutomationBtn.addEventListener('click', () => this.resumeAutomation());
-      this.resetAutomationBtn.addEventListener('click', () => this.resetAutomation());
-
-      // Notification settings
-      if (this.enableNotifications) {
-        this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
-      }
-
-      // Persist company name on change
-      if (this.companyNameInput) {
-        this.companyNameInput.addEventListener('input', async () => {
-          // Get current tab and update title immediately
-          const companyName = this.companyNameInput.value.trim();
-
-          this.documentManager.companyName = companyName || 'Company';
-          this.documentManager.updateDocumentTitle();
-
-          // Update tab title in real-time
-          await this.updateTabTitle(companyName);
-
-          // Save only the companyName in UI state
-          this.saveUIState({
-            // Minimal state object; other fields will be merged internally
-            current: this.current || 0,
-            total: this.total || 0,
-            percentage: this.percentage || 0,
-            currentPromptText: this.currentPromptText || '',
-            responseCount: this.documentManager.getResponseCount(),
-            documentStatus: this.documentStatus ? this.documentStatus.textContent : 'Ready'
-          });
+            // Download via bridge
+            this.documentManager.downloadDocx();
         });
-      }
+        this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
+
+
+        // ✅ TEMPORARY: Add debug trigger (double-click company input field)
+        if (this.companyNameInput) {
+            this.companyNameInput.addEventListener('dblclick', () => {
+                this.debugCompanyName();
+            });
+        }
+        // Automation controls
+        this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
+        this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
+        this.resumeAutomationBtn.addEventListener('click', () => this.resumeAutomation());
+        this.resetAutomationBtn.addEventListener('click', () => this.resetAutomation());
+
+        // Notification settings
+        if (this.enableNotifications) {
+            this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
+        }
+
+        // Persist company name on change
+        if (this.companyNameInput) {
+            this.companyNameInput.addEventListener('input', async () => {
+                // Get current tab and update title immediately
+                const companyName = this.companyNameInput.value.trim();
+
+                this.documentManager.companyName = companyName || 'Company';
+                this.documentManager.updateDocumentTitle();
+
+                // Update tab title in real-time
+                await this.updateTabTitle(companyName);
+
+                // Save only the companyName in UI state
+                this.saveUIState({
+                    // Minimal state object; other fields will be merged internally
+                    current: this.current || 0,
+                    total: this.total || 0,
+                    percentage: this.percentage || 0,
+                    currentPromptText: this.currentPromptText || '',
+                    responseCount: this.documentManager.getResponseCount(),
+                    documentStatus: this.documentStatus ? this.documentStatus.textContent : 'Ready'
+                });
+            });
+        }
     }
 
     // ✅ ADD THIS DEBUG METHOD (for testing)
@@ -418,16 +421,16 @@ class PerplexityAutomator {
 
     // NEW: Update tab title helper function
     async updateTabTitle(companyName) {
-      try {
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-        await browser.runtime.sendMessage({
-          type: 'update-tab-title',
-          tabId: tab.id,
-          companyName: companyName || ''
-        });
-      } catch (error) {
-        console.error('Failed to update tab title:', error);
-      }
+        try {
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            await browser.runtime.sendMessage({
+                type: 'update-tab-title',
+                tabId: tab.id,
+                companyName: companyName || ''
+            });
+        } catch (error) {
+            console.error('Failed to update tab title:', error);
+        }
     }
 
     setupMessageListener() {
@@ -481,175 +484,177 @@ class PerplexityAutomator {
 
 
     handleProgressUpdate(data) {
-      const current = data.current;
-      const total = data.total;
+        const current = data.current;
+        const total = data.total;
 
-      // Update document status to show progress
-      const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+        // Update document status to show progress
+        const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
 
-      if (data.status === 'processing' && data.prompt) {
-        this.updateDocumentStatus('collecting', `Processing ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
-        this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
+        if (data.status === 'processing' && data.prompt) {
+            this.updateDocumentStatus('collecting', `Processing ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
+            this.logMessage(`Processing prompt ${current}/${total}: ${data.prompt.substring(0, 30)}...`);
 
-        // NULL-SAFE: Check if currentPrompt exists before using it
-        if (this.currentPrompt) {
-          this.currentPrompt.textContent = `Processing ${current}/${total}: ${data.prompt.substring(0,30)}...`;
+            // NULL-SAFE: Check if currentPrompt exists before using it
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Processing ${current}/${total}: ${data.prompt.substring(0,30)}...`;
+            }
+        } else if (data.status === 'completed') {
+            this.updateDocumentStatus('collecting', `Completed ${current}/${total} (${percentage}%)`);
+            this.logMessage(`✓ Prompt ${current} completed successfully`);
+
+            // NULL-SAFE: Check if currentPrompt exists before using it
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Completed ${current}/${total} (${percentage}%)`;
+            }
+
+            // In handleProgressUpdate()
+            if (data.response && data.prompt) {
+                // Sync with background to get updated response count
+                this.documentManager.syncWithBackground().then(() => {
+                    this.updateResponseCount(); // ← Now gets real count from background
+                });
+            }
+        } else if (data.status === 'failed') {
+            // NULL-SAFE: Check if currentPrompt exists before using it
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
+            }
+            this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
+        } else if (data.status === 'retrying') {
+            // NULL-SAFE: Check if currentPrompt exists before using it
+            if (this.currentPrompt) {
+                this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
+            }
+            this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
         }
-      } else if (data.status === 'completed') {
-        this.updateDocumentStatus('collecting', `Completed ${current}/${total} (${percentage}%)`);
-        this.logMessage(`✓ Prompt ${current} completed successfully`);
 
-        // NULL-SAFE: Check if currentPrompt exists before using it
-        if (this.currentPrompt) {
-          this.currentPrompt.textContent = `Completed ${current}/${total} (${percentage}%)`;
-        }
-
-        // NEW: Response collection handled by background script, just update UI
-        if (data.response && data.prompt) {
-          this.updateResponseCount();
-        }
-      } else if (data.status === 'failed') {
-        // NULL-SAFE: Check if currentPrompt exists before using it
-        if (this.currentPrompt) {
-          this.currentPrompt.textContent = `Failed prompt ${current}/${total}`;
-        }
-        this.logMessage(`✗ Prompt ${current} failed: ${data.error || 'Unknown error'}`);
-      } else if (data.status === 'retrying') {
-        // NULL-SAFE: Check if currentPrompt exists before using it
-        if (this.currentPrompt) {
-          this.currentPrompt.textContent = `Retrying prompt ${current}/${total} (${data.retryCount}/${data.maxRetries})`;
-        }
-        this.logMessage(`🔄 Retrying prompt ${current} (attempt ${data.retryCount}/${data.maxRetries})`);
-      }
-
-      const uiState = {
-        current: data.current,
-        total: data.total,
-        percentage,
-        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
-        responseCount: this.documentManager.getResponseCount(),
-        documentStatus: this.documentStatus ? this.documentStatus.textContent : ''
-      };
-      this.saveUIState(uiState);
+        const uiState = {
+            current: data.current,
+            total: data.total,
+            percentage,
+            currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus ? this.documentStatus.textContent : ''
+        };
+        this.saveUIState(uiState);
     }
 
 
     handleAutomationComplete(data) {
-      this.isRunning = false;
-      this.updateAutomationButton();
+        this.isRunning = false;
+        this.updateAutomationButton();
 
-      // NULL-SAFE: Check if currentPrompt exists before using it
-      if (this.currentPrompt) {
-        this.currentPrompt.textContent = `Automation completed! ${data.completed}/${data.total} prompts processed`;
-      }
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = `Automation completed! ${data.completed}/${data.total} prompts processed`;
+        }
 
-      this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
+        this.logMessage(`🎉 Automation completed! Processed ${data.completed}/${data.total} prompts`);
 
-      if (data.summary) {
-        this.logMessage(`Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
-      }
+        if (data.summary) {
+            this.logMessage(`Success rate: ${data.summary.successRate}% (${data.summary.successful} successful, ${data.summary.failed} failed)`);
+        }
 
-      // NEW: Finalize document
-      this.documentManager.finalizeDocument(data.summary);
-      this.updateDocumentStatus('ready', 'Document ready for download');
-      this.enableDownloadButtons();
+        // NEW: Finalize document (handled by background, just update UI)
+        this.updateDocumentStatus('ready', 'Document ready for download');
+        this.enableDownloadButtons();
 
-      // Persist final state
-      this.saveUIState({
-        current: data.completed,
-        total: data.total,
-        percentage: Math.round((data.completed/data.total) * 100),
-        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
-        responseCount: this.documentManager.getResponseCount(),
-        documentStatus: this.documentStatus.textContent
-      });
+        // Persist final state
+        this.saveUIState({
+            current: data.completed,
+            total: data.total,
+            percentage: Math.round((data.completed/data.total) * 100),
+            currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus.textContent
+        });
     }
 
 
     handleAutomationStopped(data) {
-      this.isRunning = false;
-      this.updateAutomationButton();
+        this.isRunning = false;
+        this.updateAutomationButton();
 
-      // NULL-SAFE: Check if currentPrompt exists before using it
-      if (this.currentPrompt) {
-        this.currentPrompt.textContent = 'Automation stopped';
-      }
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = 'Automation stopped';
+        }
 
-      this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
+        this.logMessage(`⏹️ Automation stopped. Processed ${data.completed || 0}/${data.total || 0} prompts`);
 
-      // NEW: Partial document available
-      if (this.documentManager.hasResponses()) {
-        this.updateDocumentStatus('partial', 'Partial document available');
-        this.enableDownloadButtons();
-      }
+        // NEW: Partial document available
+        if (this.documentManager.hasResponses()) {
+            this.updateDocumentStatus('partial', 'Partial document available');
+            this.enableDownloadButtons();
+        }
 
-      // Persist final state
-      this.saveUIState({
-        current: data.completed,
-        total: data.total,
-        percentage: Math.round((data.completed/data.total)*100),
-        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
-        responseCount: this.documentManager.getResponseCount(),
-        documentStatus: this.documentStatus.textContent
-      });
+        // Persist final state
+        this.saveUIState({
+            current: data.completed,
+            total: data.total,
+            percentage: Math.round((data.completed/data.total)*100),
+            currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus.textContent
+        });
     }
 
 
     handleAutomationError(data) {
-      this.isRunning = false;
-      this.updateAutomationButton();
+        this.isRunning = false;
+        this.updateAutomationButton();
 
-      // NULL-SAFE: Check if currentPrompt exists before using it
-      if (this.currentPrompt) {
-        this.currentPrompt.textContent = 'Automation error occurred';
-      }
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = 'Automation error occurred';
+        }
 
-      this.logMessage(`❌ Error: ${data.error || 'Unknown error occurred'}`);
-      this.showNotification('Automation error: ' + (data.error || 'Unknown error'), 'error');
+        this.logMessage(`❌ Error: ${data.error || 'Unknown error occurred'}`);
+        this.showNotification('Automation error: ' + (data.error || 'Unknown error'), 'error');
     }
 
 
     handleAutomationPaused(data) {
-      // NULL-SAFE: Check if currentPrompt exists before using it
-      if (this.currentPrompt) {
-        this.currentPrompt.textContent = 'Automation paused';
-      }
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = 'Automation paused';
+        }
 
-      this.logMessage(`⏸️ Automation paused at prompt ${data.currentIndex + 1}/${data.total}`);
-      this.updateAutomationButton(); // This will show/hide correct buttons based on state
+        this.logMessage(`⏸️ Automation paused at prompt ${data.currentIndex + 1}/${data.total}`);
+        this.updateAutomationButton(); // This will show/hide correct buttons based on state
 
-      // Save paused state
-      this.saveUIState({
-        current: data.currentIndex,
-        total: data.total,
-        percentage: Math.round((data.currentIndex / data.total) * 100),
-        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
-        responseCount: this.documentManager.getResponseCount(),
-        documentStatus: this.documentStatus.textContent,
-        isPaused: true
-      });
+        // Save paused state
+        this.saveUIState({
+            current: data.currentIndex,
+            total: data.total,
+            percentage: Math.round((data.currentIndex / data.total) * 100),
+            currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus.textContent,
+            isPaused: true
+        });
     }
 
 
     handleAutomationResumed(data) {
-      // NULL-SAFE: Check if currentPrompt exists before using it
-      if (this.currentPrompt) {
-        this.currentPrompt.textContent = `Resuming automation...`;
-      }
+        // NULL-SAFE: Check if currentPrompt exists before using it
+        if (this.currentPrompt) {
+            this.currentPrompt.textContent = `Resuming automation...`;
+        }
 
-      this.logMessage(`▶️ Automation resumed from prompt ${data.currentIndex + 1}/${data.total}`);
-      this.updateAutomationButton();
+        this.logMessage(`▶️ Automation resumed from prompt ${data.currentIndex + 1}/${data.total}`);
+        this.updateAutomationButton();
 
-      // Save resumed state
-      this.saveUIState({
-        current: data.currentIndex,
-        total: data.total,
-        percentage: Math.round((data.currentIndex / data.total) * 100),
-        currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
-        responseCount: this.documentManager.getResponseCount(),
-        documentStatus: this.documentStatus.textContent,
-        isPaused: false
-      });
+        // Save resumed state
+        this.saveUIState({
+            current: data.currentIndex,
+            total: data.total,
+            percentage: Math.round((data.currentIndex / data.total) * 100),
+            currentPromptText: this.currentPrompt ? this.currentPrompt.textContent : '',
+            responseCount: this.documentManager.getResponseCount(),
+            documentStatus: this.documentStatus.textContent,
+            isPaused: false
+        });
     }
 
 
@@ -671,7 +676,7 @@ class PerplexityAutomator {
     updateResponseCount() {
         const count = this.documentManager.getResponseCount();
         this.responseCount.textContent = count;
-        
+
         // Enable clear button if responses exist
         this.clearDocumentBtn.disabled = count === 0;
     }
@@ -691,8 +696,8 @@ class PerplexityAutomator {
             try {
                 const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
                 await browser.runtime.sendMessage({
-                  type: 'clear-tab-document',
-                  tabId: tab.id
+                    type: 'clear-tab-document',
+                    tabId: tab.id
                 });
             } catch (error) {
                 console.error('Failed to clear background document:', error);
@@ -729,96 +734,96 @@ class PerplexityAutomator {
     }
 
     showNotification(message, type = 'info') {
-      // Send notification request to background script
-      try {
-        browser.runtime.sendMessage({
-          type: 'show-notification',
-          data: {
-            message: message,
-            notificationType: type,
-            title: 'Perplexity AI Automator'
-          }
-        }).catch(error => {
-          // Fallback to console if messaging fails
-          console.log(`[${type.toUpperCase()}] ${message}`);
-        });
-      } catch (error) {
-        // Fallback to console if notifications fail
-        console.log(`[${type.toUpperCase()}] ${message}`);
-      }
+        // Send notification request to background script
+        try {
+            browser.runtime.sendMessage({
+                type: 'show-notification',
+                data: {
+                    message: message,
+                    notificationType: type,
+                    title: 'Perplexity AI Automator'
+                }
+            }).catch(error => {
+                // Fallback to console if messaging fails
+                console.log(`[${type.toUpperCase()}] ${message}`);
+            });
+        } catch (error) {
+            // Fallback to console if notifications fail
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
     }
 
     async updateAutomationButton() {
-      try {
-        // Get current tab to check tab-specific automation status
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        try {
+            // Get current tab to check tab-specific automation status
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
 
-        // Get current automation status from background
-        const response = await browser.runtime.sendMessage({
-          type: 'get-automation-status',
-          tabId: tab.id
-        });
-        const status = response || {};
+            // Get current automation status from background
+            const response = await browser.runtime.sendMessage({
+                type: 'get-automation-status',
+                tabId: tab.id
+            });
+            const status = response || {};
 
-        // Check if THIS TAB has running automation (not global)
-        const isThisTabRunning = status.tabId === tab.id && status.isRunning;
+            // Check if THIS TAB has running automation (not global)
+            const isThisTabRunning = status.tabId === tab.id && status.isRunning;
 
-        if (isThisTabRunning) {
-          // Hide start button, show running controls
-          this.startAutomationBtn.style.display = 'none';
-          if (this.runningControls) {
-            this.runningControls.style.display = 'flex';
-          }
-          if (this.resetAutomationBtn) {
-            this.resetAutomationBtn.style.display = 'inline-flex';
-            this.resetAutomationBtn.disabled = false;
-          }
+            if (isThisTabRunning) {
+                // Hide start button, show running controls
+                this.startAutomationBtn.style.display = 'none';
+                if (this.runningControls) {
+                    this.runningControls.style.display = 'flex';
+                }
+                if (this.resetAutomationBtn) {
+                    this.resetAutomationBtn.style.display = 'inline-flex';
+                    this.resetAutomationBtn.disabled = false;
+                }
 
-          if (status.isPaused) {
-            // Show resume, hide pause
-            if (this.pauseAutomationBtn) {
-              this.pauseAutomationBtn.style.display = 'none';
+                if (status.isPaused) {
+                    // Show resume, hide pause
+                    if (this.pauseAutomationBtn) {
+                        this.pauseAutomationBtn.style.display = 'none';
+                    }
+                    if (this.resumeAutomationBtn) {
+                        this.resumeAutomationBtn.style.display = 'inline-flex';
+                        this.resumeAutomationBtn.disabled = false;
+                    }
+                } else {
+                    // Show pause, hide resume
+                    if (this.pauseAutomationBtn) {
+                        this.pauseAutomationBtn.style.display = 'inline-flex';
+                        this.pauseAutomationBtn.disabled = false;
+                    }
+                    if (this.resumeAutomationBtn) {
+                        this.resumeAutomationBtn.style.display = 'none';
+                    }
+                }
+            } else {
+                // This tab is not running - show start button only
+                this.startAutomationBtn.style.display = 'inline-flex';
+                this.startAutomationBtn.disabled = this.prompts.length === 0;
+
+                // Hide running controls
+                if (this.runningControls) {
+                    this.runningControls.style.display = 'none';
+                }
             }
-            if (this.resumeAutomationBtn) {
-              this.resumeAutomationBtn.style.display = 'inline-flex';
-              this.resumeAutomationBtn.disabled = false;
-            }
-          } else {
-            // Show pause, hide resume
-            if (this.pauseAutomationBtn) {
-              this.pauseAutomationBtn.style.display = 'inline-flex';
-              this.pauseAutomationBtn.disabled = false;
-            }
-            if (this.resumeAutomationBtn) {
-              this.resumeAutomationBtn.style.display = 'none';
-            }
-          }
-        } else {
-          // This tab is not running - show start button only
-          this.startAutomationBtn.style.display = 'inline-flex';
-          this.startAutomationBtn.disabled = this.prompts.length === 0;
+        } catch (error) {
+            this.logError('Failed to update button states:', error);
 
-          // Hide running controls
-          if (this.runningControls) {
-            this.runningControls.style.display = 'none';
-          }
+            // Enable start button by default on error
+            this.startAutomationBtn.style.display = 'inline-flex';
+            this.startAutomationBtn.disabled = this.prompts.length === 0;
+
+            // Hide running controls on error
+            if (this.runningControls) {
+                this.runningControls.style.display = 'none';
+            }
         }
-      } catch (error) {
-        this.logError('Failed to update button states:', error);
 
-        // Enable start button by default on error
-        this.startAutomationBtn.style.display = 'inline-flex';
-        this.startAutomationBtn.disabled = this.prompts.length === 0;
-
-        // Hide running controls on error
-        if (this.runningControls) {
-          this.runningControls.style.display = 'none';
+        if (this.prompts.length > 0) {
+            this.renderPrompts();
         }
-      }
-
-      if (this.prompts.length > 0) {
-        this.renderPrompts();
-      }
     }
 
 
@@ -839,7 +844,7 @@ class PerplexityAutomator {
 
         try {
             const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-            
+
             if (!tab.url.includes('perplexity.ai')) {
                 this.showNotification('Please navigate to Perplexity.ai first', 'error');
                 return;
@@ -850,29 +855,29 @@ class PerplexityAutomator {
             this.documentManager.updateDocumentTitle(); // ← ADD THIS LINE
             // Update tab title when starting automation
             if (companyName) {
-              await this.updateTabTitle(companyName);
+                await this.updateTabTitle(companyName);
 
             }
             const promptsToSend = this.prompts.map(prompt => {
-              // prompt is now an object with { text, pauseAfter }
-              let txt = prompt.text;
-              if (companyName) {
-                // replace company placeholder if desired
-                // txt = txt.replace(/\[Company\]/g, companyName);
-                txt = txt.replace(/\[Company Name\]/g, companyName);
-              }
-              return { text: txt, pauseAfter: !!prompt.pauseAfter };
+                // prompt is now an object with { text, pauseAfter }
+                let txt = prompt.text;
+                if (companyName) {
+                    // replace company placeholder if desired
+                    // txt = txt.replace(/\[Company\]/g, companyName);
+                    txt = txt.replace(/\[Company Name\]/g, companyName);
+                }
+                return { text: txt, pauseAfter: !!prompt.pauseAfter };
             });
 
             await browser.runtime.sendMessage({
-              type: 'start-automation',
-              prompts: promptsToSend,
-              tabId: tab.id,
-              companyName: companyName || ''
+                type: 'start-automation',
+                prompts: promptsToSend,
+                tabId: tab.id,
+                companyName: companyName || ''
             });
 
             this.updateAutomationButton();
-            
+
         } catch (error) {
             this.logError('Failed to start automation:', error);
             this.showNotification('Failed to start automation', 'error');
@@ -880,27 +885,27 @@ class PerplexityAutomator {
     }
 
     async resetAutomation() {
-      // Show confirmation dialog
-      const confirmed = confirm(
-        'Are you sure you want to reset the automation?\n\n' +
-        'This will stop the current automation and clear all progress. ' +
-        'Any responses collected so far will be preserved in the document.'
-      );
+        // Show confirmation dialog
+        const confirmed = confirm(
+            'Are you sure you want to reset the automation?\n\n' +
+            'This will stop the current automation and clear all progress. ' +
+            'Any responses collected so far will be preserved in the document.'
+        );
 
-      if (!confirmed) {
-        return;
-      }
-      try {
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-        await browser.runtime.sendMessage({
-          type: 'reset-automation',
-          tabId: tab.id
-        });
-        this.showNotification('Automation reset successfully', 'info');
-      } catch (error) {
-        this.logError('Failed to reset automation:', error);
-        this.showNotification('Failed to reset automation', 'error');
-      }
+        if (!confirmed) {
+            return;
+        }
+        try {
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            await browser.runtime.sendMessage({
+                type: 'reset-automation',
+                tabId: tab.id
+            });
+            this.showNotification('Automation reset successfully', 'info');
+        } catch (error) {
+            this.logError('Failed to reset automation:', error);
+            this.showNotification('Failed to reset automation', 'error');
+        }
     }
 
     async pauseAutomation() {
@@ -942,12 +947,12 @@ class PerplexityAutomator {
     }
 
     renderPrompts() {
-      // Update prompt count
-      this.updatePromptCount();
+        // Update prompt count
+        this.updatePromptCount();
 
-      // In simplified popup, we don't show the prompt list
-      // The prompts are managed in the separate prompt manager page
-      // This method is kept minimal to avoid errors
+        // In simplified popup, we don't show the prompt list
+        // The prompts are managed in the separate prompt manager page
+        // This method is kept minimal to avoid errors
     }
 
 
@@ -984,10 +989,10 @@ class PerplexityAutomator {
 
     // Update prompt count display
     updatePromptCount() {
-      const count = this.prompts.length;
-      if (this.promptCount) {
-        this.promptCount.textContent = count;
-      }
+        const count = this.prompts.length;
+        if (this.promptCount) {
+            this.promptCount.textContent = count;
+        }
     }
 
     updateStartButton() {
@@ -1003,86 +1008,63 @@ class PerplexityAutomator {
     }
 
     async loadPrompts() {
-      try {
-        const result = await browser.storage.local.get(['prompts']);
-        this.prompts = result.prompts || [];
-        this.updatePromptCount(); // Update the display counter
-      } catch (error) {
-        this.logError('Failed to load prompts:', error);
-      }
+        try {
+            const result = await browser.storage.local.get(['prompts']);
+            this.prompts = result.prompts || [];
+            this.updatePromptCount(); // Update the display counter
+        } catch (error) {
+            this.logError('Failed to load prompts:', error);
+        }
     }
 
 }
 
-// NEW: Document Management Class
+// NEW: Document Manager Bridge Class
 /**
- * Enhanced Document Manager for Microsoft Word Layout
- * Formats DOCX with Times New Roman index, Aptos Display headings
+ * ADDED: Bridge class for communicating with background DocumentManager
+ * Maintains same API as original DocumentManager but delegates to background.js
  */
-class DocumentManager {
+class DocumentManagerBridge {
     constructor() {
         this.companyName = 'Company';
-        this.tabId = null; // Track which tab this belongs to
-        this.document = {
-            title: `Business Analyses for ${this.companyName}`,
+        this.tabId = null;
+        this._cachedDocument = {
+            title: 'Business Analyses for Company',
             timestamp: null,
             responses: [],
             summary: null
         };
     }
 
-    // NEW: Set the tab ID for this document manager
     setTabId(tabId) {
-      this.tabId = tabId;
-    }
-
-    // NEW: Get tab-specific storage key
-    getStorageKey() {
-      return this.tabId ? `popupDocument_tab_${this.tabId}` : 'popupDocument';
+        this.tabId = tabId;
     }
 
     async loadDocumentState() {
-      try {
-        const storageKey = this.getStorageKey();
-        const result = await browser.storage.local.get([storageKey]);
-        if (result[storageKey]) {
-          this.document = result[storageKey];
-          console.log('Document state loaded:', this.getResponseCount(), 'responses');
-        }
-      } catch (error) {
-        console.error('Failed to load document state:', error);
-      }
-    }
-
-    async saveDocumentState() {
-        try {
-            const storageKey = this.getStorageKey();
-            await browser.storage.local.set({ [storageKey]: this.document });
-        } catch (error) {
-            console.error('Failed to save document state:', error);
-        }
+        // Sync with background document manager
+        return await this.syncWithBackground();
     }
 
     async syncWithBackground() {
         try {
-            // NEW: Pass current tab ID to get tab-specific document data
             const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
             const response = await browser.runtime.sendMessage({
-              type: 'get-document-data',
-              tabId: tab.id
+                type: 'get-tab-document-data',
+                tabId: tab.id
             });
-            if (response && response.document && response.document.responses.length > 0) {
+
+            if (response && response.document) {
                 // Map background document structure to popup structure
-                this.document = {
-                    ...this.document,
-                    responses: response.document.responses.map(bgResponse => ({
-                        promptNumber: bgResponse.index + 1,
-                        promptText: bgResponse.prompt,
-                        responseText: bgResponse.response,
-                        timestamp: bgResponse.timestamp
+                this._cachedDocument = {
+                    ...response.document,
+                    responses: response.document.responses.map(bg => ({
+                        promptNumber: bg.index + 1,
+                        promptText: bg.prompt,
+                        responseText: bg.response,
+                        timestamp: bg.timestamp
                     }))
                 };
-                await this.saveDocumentState();
+                this.companyName = response.companyName || 'Company';
                 console.log('Synced with background:', this.getResponseCount(), 'responses');
                 return true;
             }
@@ -1092,587 +1074,57 @@ class DocumentManager {
         return false;
     }
 
-    addResponse(promptNumber, promptText, responseText) {
-        const response = {
-            promptNumber,
-            promptText,
-            responseText,
-            timestamp: new Date().toISOString()
-        };
-
-        const existingIndex = this.document.responses.findIndex(r => r.promptNumber === promptNumber);
-        if (existingIndex >= 0) {
-            this.document.responses[existingIndex] = response;
-        } else {
-            this.document.responses.push(response);
-        }
-
-        this.document.responses.sort((a, b) => a.promptNumber - b.promptNumber);
-        this.saveDocumentState();
-    }
-
     getResponseCount() {
-        return this.document.responses.length;
+        return this._cachedDocument.responses.length;
     }
 
     hasResponses() {
         return this.getResponseCount() > 0;
     }
 
-    clearDocument() {
-        this.document = {
-            title: `Business Analyses for ${this.companyName}`,
-            timestamp: null,
-            responses: [],
-            summary: null
-        };
-        this.saveDocumentState();
-    }
-
-    finalizeDocument(summary) {
-        this.document.summary = summary;
-        this.saveDocumentState();
+    updateDocumentTitle() {
+        this._cachedDocument.title = `Business Analyses for ${this.companyName}`;
     }
 
     async downloadDocx() {
-        if (!this.hasResponses()) {
-            alert('No responses to download');
-            return;
-        }
-
         try {
-            // Check if html-docx library is available
-            if (typeof htmlDocx === 'undefined') {
-                console.warn('html-docx library not found, falling back to plain text');
-                return this.downloadDocxPlainText();
-            }
-
-            // Build HTML document structure
-            const htmlContent = await this.generateHTMLDocument();
-
-            // Convert HTML to DOCX using html-docx library
-            const docxBlob = htmlDocx.asBlob(htmlContent, {
-                orientation: 'portrait',
-                margins: {
-                    top: 720,    // 0.5 inch in twips (1440 twips = 1 inch)
-                    right: 720,
-                    bottom: 720,
-                    left: 720
-                }
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            const response = await browser.runtime.sendMessage({
+                type: 'download-document',
+                tabId: tab.id,
+                companyName: this.companyName
             });
 
-            // Use the companyName stored in this DocumentManager instance for filename prefix
-            const safeName = (this.companyName || 'Company')
-                .replace(/[<>:"\/\\|?*\x00-\x1F]/g, '')
-                .replace(/\s+/g, '-');
-
-            // 2. Format date/time as MM.DD.YYYY-HH.MM.SS
-            const now = new Date();
-            const pad2 = n => String(n).padStart(2,'0');
-            const datePart = `${pad2(now.getMonth()+1)}.${pad2(now.getDate())}.${now.getFullYear()}`;
-            const timePart = `${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}`;
-
-            // 3. Build filename
-            const filename = `${safeName}-${datePart}-${timePart}.docx`;
-
-            const url = URL.createObjectURL(docxBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            console.log('HTML-formatted DOCX downloaded successfully:', filename);
-
+            if (!response.success) {
+                throw new Error('Download failed in background script');
+            }
         } catch (error) {
-            console.error('Failed to generate HTML DOCX:', error);
-            console.log('Falling back to plain text method');
-            return this.downloadDocxPlainText();
+            console.error('Failed to download document:', error);
+            alert('Failed to download document: ' + error.message);
         }
     }
 
-    updateDocumentTitle() {
-        this.document.title = `Business Analyses for ${this.companyName}`;
-        this.saveDocumentState();
-    }
-
-    /**
-     * Load brand icon as base64 data URL
-     * @returns {Promise<string>} Base64 data URL of the icon
-     */
-    async loadBrandIcon() {
+    async clearDocument() {
         try {
-            const iconUrl = browser.runtime.getURL('icons/logo-icon.png');
-            const response = await fetch(iconUrl);
-
-            if (!response.ok) {
-                throw new Error(`Failed to load icon: ${response.status}`);
-            }
-
-            const blob = await response.blob();
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(blob);
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            await browser.runtime.sendMessage({
+                type: 'clear-tab-document',
+                tabId: tab.id
             });
+            this._cachedDocument.responses = [];
         } catch (error) {
-            console.warn('Failed to load brand icon:', error);
-            return null; // Return null if icon fails to load
+            console.error('Failed to clear document:', error);
         }
     }
 
-    /**
-     * NEW METHOD: Generate structured HTML document
-     * Add this new method to the DocumentManager class
-     */
-    async generateHTMLDocument() {
-        const title = this.document.title;
-
-        const iconDataUrl = await this.loadBrandIcon();
-        // Explicitly build "dd Month yyyy" to ensure correct order
-        const now = new Date();
-        const day = String(now.getDate()).padStart(2, '0');
-        const month = now.toLocaleString(undefined, { month: 'long' });
-        const year = now.getFullYear();
-        const timestamp = `${day} ${month} ${year}`;
-
-        let html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>${title}</title>
-            <style>
-                body {
-                    font-family: 'Times New Roman', serif;
-                    font-size: 12pt;
-                    line-height: 1.5;
-                    color: #000000;
-                }
-                .brand-icon {
-                                position: absolute;
-                                top: 0;
-                                left: 0;
-                                width: 60px;
-                                height: auto;
-                                z-index: 10;
-                            }
-                .response-content {
-                    font-family: 'Times New Roman', serif;
-                    margin-bottom: 12pt;
-                    line-height: 1.5;
-                }
-                p { font-family: 'Times New Roman', serif; font-size: 12pt; margin-bottom: 6pt; }
-                h1 { font-style: normal; font-weight: normal;  font-family: 'Aptos Display', serif; color: #0F4761; font-size: 20pt; margin-bottom: 6pt; }
-                h2 { font-style: normal; font-weight: normal; font-family: 'Aptos Display', serif; color: #0F4761; font-size: 16pt; margin-bottom: 6pt; }
-                h3 { font-style: normal; font-weight: normal; font-family: 'Times New Roman', serif; color: #0F4761; font-size: 14pt; margin-bottom: 6pt; }
-                ul, ol { margin-bottom: 12pt; }
-                li { margin-bottom: 3pt; }
-                strong, b { font-weight: bold; }
-                em, i { font-style: italic; }
-                code {
-                    font-family: 'Courier New', monospace;
-                    background-color: #f0f0f0;
-                    padding: 2px 4px;
-                }
-                pre {
-                    font-family: 'Courier New', monospace;
-                    background-color: #f0f0f0;
-                    padding: 12pt;
-                    margin: 12pt 0;
-                    white-space: pre-wrap;
-                }
-                blockquote {
-                    margin-left: 24pt;
-                    padding-left: 12pt;
-                    border-left: 3pt solid #cccccc;
-                    font-style: italic;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="header-container">
-                ${iconDataUrl ? `<img src="${iconDataUrl}" alt="Brand Logo" class="brand-icon">` : ''}
-                </div>
-            </div>
-            <br style="font-size: 20pt;"></br>
-            <br style="font-size: 20pt;"></br>
-            <br style="font-size: 20pt;"></br>
-            <br style="font-size: 20pt;"></br>
-            <br style="font-size: 20pt;"></br>
-            <br style="font-size: 20pt;"></br>
-            <h1 style="color: #000000;font-family: 'Aptos';font-size: 20pt;height: 100vh;display: flex;flex-direction: column;justify-content: center;text-align: left; margin: 0;padding: 0;">${title}</h1>
-            <p style="font-family: 'Aptos';font-size: 12pt;text-align: left; margin-bottom: 24pt;">${timestamp}</p>
-        `;
-
-        html += `
-            <!-- First page break -->
-            <br clear="all" style="page-break-before: always" />
-            <!-- Second page break -->
-            <br clear="all" style="page-break-before: always" />
-        `;
-
-
-        // Add main content with HTML formatting - HEADERS AND PAGE BREAKS REMOVED
-            this.document.responses.forEach((response, index) => {
-                // Process the response text for HTML formatting
-                const processedResponse = this.processResponseText(response.responseText);
-                html += `<div class="response-content">${processedResponse}</div>`;
-                html += `<br clear="all" style="page-break-before: always"`;
-            });
-
-        html += `</body></html>`;
-        return html;
+    finalizeDocument(summary) {
+        this._cachedDocument.summary = summary;
     }
 
-    /**
-     * Process response text to preserve HTML formatting
-     * Add this new method to the DocumentManager class
-     */
-    processResponseText(responseText) {
-        if (!responseText) return '';
-
-        // If the response already contains HTML tags, return as-is
-        if (responseText.includes('<') && responseText.includes('>')) {
-            return responseText;
-        }
-
-        // Convert plain text to HTML with basic formatting
-        let processed = responseText
-            // Escape any existing HTML entities first
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-
-            // Convert markdown-style formatting to HTML
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // Bold
-            .replace(/\*(.*?)\*/g, '<em>$1</em>')              // Italic
-            .replace(/`(.*?)`/g, '<code>$1</code>')            // Inline code
-
-            // Convert line breaks to paragraphs
-            .split('\n\n')
-            .map(paragraph => paragraph.trim())
-            .filter(paragraph => paragraph.length > 0)
-            .map(paragraph => {
-                // Handle lists
-                if (paragraph.includes('\n- ') || paragraph.includes('\n• ')) {
-                    const lines = paragraph.split('\n');
-                    let listHtml = '';
-                    let inList = false;
-
-                    for (const line of lines) {
-                        const trimmedLine = line.trim();
-                        if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('• ')) {
-                            if (!inList) {
-                                listHtml += '<ul>';
-                                inList = true;
-                            }
-                            listHtml += `<li>${trimmedLine.substring(2)}</li>`;
-                        } else if (trimmedLine.match(/^\d+\.\s/)) {
-                            if (!inList) {
-                                listHtml += '<ol>';
-                                inList = true;
-                            }
-                            listHtml += `<li>${trimmedLine.replace(/^\d+\.\s/, '')}</li>`;
-                        } else {
-                            if (inList) {
-                                listHtml += inList ? '</ul>' : '</ol>';
-                                inList = false;
-                            }
-                            if (trimmedLine) {
-                                listHtml += `<p>${trimmedLine}</p>`;
-                            }
-                        }
-                    }
-
-                    if (inList) {
-                        listHtml += '</ul>';
-                    }
-
-                    return listHtml;
-                }
-
-                // Regular paragraph
-                return `<p>${paragraph.replace(/\n/g, '<br>')}</p>`;
-            })
-            .join('');
-
-        return processed;
-    }
-
-    /**
-     * Generate and download DOCX with Microsoft Word formatting
-     * Follows screenshot specifications:
-     * - Index: Times New Roman, 12pt, underlined
-     * - H1: Aptos Display, 20pt, Heading style
-     * - H2: Aptos Display, 16pt, Strong style
-     */
-    async downloadDocxPlainText() {
-        if (!this.hasResponses()) {
-            alert('No responses to download');
-            return;
-        }
-
-        try {
-            // Import docx library (ensure it's loaded)
-            if (typeof docx === 'undefined') {
-                throw new Error('DOCX library not loaded. Please include docx.js in your extension.');
-            }
-
-            const { Document, Paragraph, TextRun, Packer, HeadingLevel, AlignmentType, UnderlineType } = docx;
-
-            // Create document sections
-            const sections = [];
-
-            // Title Page
-            sections.push(
-                new Paragraph({
-                    children: [
-                        new TextRun({
-                            text: this.document.title,
-                            font: "Aptos",
-                            size: 40, // 20pt = 40 half-points
-                            bold: true
-                        })
-                    ],
-                    heading: HeadingLevel.HEADING_1,
-                    alignment: AlignmentType.CENTER,
-                    spacing: { after: 400 }
-                })
-            );
-
-            // Timestamp
-            if (this.document.timestamp) {
-                sections.push(
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: `Generated: ${new Date(this.document.timestamp).toLocaleString()}`,
-                                font: "Aptos",
-                                size: 24, // 12pt
-                                italics: true
-                            })
-                        ],
-                        alignment: AlignmentType.CENTER,
-                        spacing: { after: 600 }
-                    })
-                );
-            }
-
-            // Table of Contents / Index
-            sections.push(
-                new Paragraph({
-                    children: [
-                        new TextRun({
-                            text: "Index",
-                            font: "Times New Roman",
-                            size: 24, // 12pt
-                            underline: {
-                                type: UnderlineType.SINGLE
-                            }
-                        })
-                    ],
-                    spacing: { before: 400, after: 200 }
-                })
-            );
-
-            // Index entries - Clean business document style
-            this.document.responses.forEach((response, index) => {
-                const pageNumber = index + 2; // Start from page 2 (after title page)
-                sections.push(
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: `Question ${response.promptNumber}`,
-                                font: "Times New Roman",
-                                size: 24 // 12pt
-                            }),
-                            new TextRun({
-                                text: `${'.'.repeat(Math.max(1, 50 - `Question ${response.promptNumber}`.length))} ${pageNumber}`,
-                                font: "Times New Roman",
-                                size: 24 // 12pt
-                            })
-                        ],
-                        spacing: { after: 100 }
-                    })
-                );
-            });
-
-            // Page break before content
-            sections.push(
-                new Paragraph({
-                    children: [new TextRun({ text: "", break: 1 })],
-                    pageBreakBefore: true
-                })
-            );
-
-            // Main Content
-            this.document.responses.forEach((response, index) => {
-                // H1 - Question/Prompt heading
-                sections.push(
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: `Question ${response.promptNumber}`,
-                                font: "Aptos Display",
-                                size: 40, // 20pt
-                                bold: true
-                            })
-                        ],
-                        heading: HeadingLevel.HEADING_1,
-                        spacing: { before: 600, after: 200 }
-                    })
-                );
-
-                // H2 - Response heading
-                sections.push(
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: "Response",
-                                font: "Aptos Display",
-                                size: 32, // 16pt
-                                bold: true
-                            })
-                        ],
-                        heading: HeadingLevel.HEADING_2,
-                        spacing: { before: 400, after: 200 }
-                    })
-                );
-
-                // Response content - split into paragraphs
-                const responseLines = response.responseText.split('\n\n');
-                responseLines.forEach(line => {
-                    if (line.trim()) {
-                        sections.push(
-                            new Paragraph({
-                                children: [
-                                    new TextRun({
-                                        text: line.trim(),
-                                        font: "Times New Roman",
-                                        size: 24 // 12pt for body text
-                                    })
-                                ],
-                                spacing: { after: 200 }
-                            })
-                        );
-                    }
-                });
-
-                // Add spacing between questions
-                if (index < this.document.responses.length - 1) {
-                    sections.push(
-                        new Paragraph({
-                            children: [new TextRun({ text: "" })],
-                            spacing: { after: 400 }
-                        })
-                    );
-                }
-            });
-
-            // Summary section if available
-            if (this.document.summary) {
-                sections.push(
-                    new Paragraph({
-                        children: [new TextRun({ text: "", break: 1 })],
-                        pageBreakBefore: true
-                    })
-                );
-
-                sections.push(
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: "Summary",
-                                font: "Aptos Display",
-                                size: 40, // 20pt
-                                bold: true
-                            })
-                        ],
-                        heading: HeadingLevel.HEADING_1,
-                        spacing: { before: 400, after: 300 }
-                    })
-                );
-
-                sections.push(
-                    new Paragraph({
-                        children: [
-                            new TextRun({
-                                text: `Total Prompts: ${this.document.summary.total || this.document.responses.length}`,
-                                font: "Aptos Display",
-                                size: 24
-                            })
-                        ],
-                        spacing: { after: 100 }
-                    })
-                );
-
-                if (this.document.summary.successful !== undefined) {
-                    sections.push(
-                        new Paragraph({
-                            children: [
-                                new TextRun({
-                                    text: `Successful: ${this.document.summary.successful}`,
-                                    font: "Aptos Display",
-                                    size: 24
-                                })
-                            ],
-                            spacing: { after: 100 }
-                        })
-                    );
-                }
-
-                if (this.document.summary.successRate) {
-                    sections.push(
-                        new Paragraph({
-                            children: [
-                                new TextRun({
-                                    text: `Success Rate: ${this.document.summary.successRate}%`,
-                                    font: "Aptos Display",
-                                    size: 24
-                                })
-                            ],
-                            spacing: { after: 100 }
-                        })
-                    );
-                }
-            }
-
-            // Create the document
-            const doc = new Document({
-                sections: [{
-                    properties: {},
-                    children: sections
-                }]
-            });
-
-            // FIXED: Generate and download using Blob (browser-compatible)
-            const blob = await Packer.toBlob(doc);
-
-            const url = URL.createObjectURL(blob);
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const filename = `perplexity-automation-${timestamp}.docx`;
-
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            console.log('DOCX downloaded successfully:', filename);
-
-        } catch (error) {
-            console.error('Failed to generate DOCX:', error);
-            alert('Failed to generate DOCX file: ' + error.message);
-        }
+    get document() {
+        return this._cachedDocument;
     }
 }
-
 
 // Initialize the automator
 window.automator = new PerplexityAutomator();

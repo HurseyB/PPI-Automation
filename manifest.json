@@ -23,9 +23,13 @@
       "128": "icons/icon-128.png"
     }
   },
-  
+
   "background": {
-    "scripts": ["background.js"],
+    "scripts": [
+      "lib/docx.min.js",
+      "lib/html-docx.js",
+      "background.js"
+    ],
     "persistent": false
   },
   
