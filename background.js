@@ -28,6 +28,7 @@ class AutomationManager {
         this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
         this.tabCompanyNames = new Map(); // tabId -> company name
         this.tabTimeouts = new Map(); // tabId -> timeout reference
+        this.downloadTracking = new Map(); // automationId -> download status
         this.initializeBackground();
     }
 
@@ -241,6 +242,31 @@ class AutomationManager {
         case 'clear-tab-document':
             const manager = this.getTabDocumentManager(message.tabId);
             manager.clearDocument();
+            sendResponse({ success: true });
+            break;
+        case 'docx-download-started':
+            const startInfo = this.downloadTracking.get(message.automationId);
+            if (startInfo) {
+                startInfo.status = 'downloading';
+                this.log(`Download started for automation ${message.automationId}`);
+            }
+            sendResponse({ success: true });
+            break;
+
+        case 'docx-download-completed':
+            const completeInfo = this.downloadTracking.get(message.automationId);
+            if (completeInfo) {
+                completeInfo.status = 'downloaded';
+                this.log(`Download completed for automation ${message.automationId}, scheduling cleanup`);
+                setTimeout(() => {
+                    this.cleanupAfterDownload(message.automationId);
+                }, 5000); // 5 second delay
+            }
+            sendResponse({ success: true });
+            break;
+
+        case 'cleanup-after-download':
+            await this.cleanupAfterDownload(message.automationId);
             sendResponse({ success: true });
             break;
         default:
@@ -842,28 +868,53 @@ class AutomationManager {
   /**
    * Schedule cleanup of tab state and stored results after delay
    */
-  scheduleAutomationCleanup(tabId, automationId, delayMs = 5 * 60 * 1000) {
-    setTimeout(async () => {
-      // Clear in-memory tab state
-      this.cleanupTabState(tabId);
+  scheduleAutomationCleanup(tabId, automationId, delayMs = 30 * 60 * 1000) { // Extended to 30 minutes
+      // Mark automation as awaiting download
+      this.downloadTracking.set(automationId, {
+          tabId: tabId,
+          status: 'awaiting_download',
+          timestamp: Date.now(),
+          cleanupScheduled: false
+      });
 
-      // Remove storage keys for this automation
+      // Set up fallback cleanup after extended timeout
+      setTimeout(async () => {
+          const trackingInfo = this.downloadTracking.get(automationId);
+          if (trackingInfo && trackingInfo.status !== 'downloaded') {
+              this.log(`Fallback cleanup triggered for automation ${automationId} (no download detected)`);
+              await this.performCleanup(tabId, automationId);
+          }
+      }, delayMs);
+  }
+
+  // NEW METHOD: Perform actual cleanup
+  async performCleanup(tabId, automationId) {
       try {
-        // Remove automation summary
-        await browser.storage.local.remove(`automation_${automationId}`);
-        // Remove per-prompt results
-        const allKeys = Object.keys(await browser.storage.local.get());
-        const keysToRemove = allKeys.filter(key =>
-          key.startsWith(`promptResult_${automationId}_`)
-        );
-        if (keysToRemove.length) {
-          await browser.storage.local.remove(keysToRemove);
-        }
-        this.log(`Scheduled cleanup complete for automation ${automationId}`);
+          this.cleanupTabState(tabId);
+          await browser.storage.local.remove(`automation_${automationId}`);
+
+          const allKeys = Object.keys(await browser.storage.local.get());
+          const keysToRemove = allKeys.filter(key =>
+              key.startsWith(`promptResult_${automationId}_`)
+          );
+          if (keysToRemove.length) {
+              await browser.storage.local.remove(keysToRemove);
+          }
+
+          this.downloadTracking.delete(automationId);
+          this.log(`Cleanup complete for automation ${automationId}`);
       } catch (err) {
-        this.logError(`Error during scheduled cleanup for ${automationId}:`, err);
+          this.logError(`Error during cleanup for ${automationId}:`, err);
       }
-    }, delayMs);
+  }
+
+  // NEW METHOD: Cleanup after download
+  async cleanupAfterDownload(automationId) {
+      const trackingInfo = this.downloadTracking.get(automationId);
+      if (trackingInfo) {
+          this.log(`Performing cleanup after download for automation ${automationId}`);
+          await this.performCleanup(trackingInfo.tabId, automationId);
+      }
   }
 
   generateAutomationSummary(tabId) {

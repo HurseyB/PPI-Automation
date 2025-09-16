@@ -289,59 +289,57 @@ class PerplexityAutomator {
       this.downloadDocxBtn.addEventListener('click', async () => {
           console.log('=== DOWNLOAD DEBUG START ===');
 
-          // Get tab and background data
+          // Get tab and background data (existing logic)
           const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
           const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
 
-          // Get UI state (this is where the real company name is stored!)
+          // Company name resolution (existing logic preserved)
           const uiState = await browser.storage.local.get('popupUIState');
           const uiCompanyName = uiState.popupUIState?.companyName;
-          console.log('UI State company name:', uiCompanyName);
-
-          // Get other sources
           const storedName = tabData?.companyName;
           const inputName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
 
           let finalName = 'Company';
-
-          // ✅ PRIORITY 1: UI State (has the correct name from automation)
           if (uiCompanyName && uiCompanyName !== 'Company') {
               finalName = uiCompanyName;
-              console.log('Using UI state company name:', finalName);
-          }
-          // Priority 2: Background stored name
-          else if (storedName && storedName !== 'Company') {
+          } else if (storedName && storedName !== 'Company') {
               finalName = storedName;
-              console.log('Using background name:', finalName);
-          }
-          // Priority 3: Input field
-          else if (inputName && inputName !== 'Company') {
+          } else if (inputName && inputName !== 'Company') {
               finalName = inputName;
-              console.log('Using input name:', finalName);
           }
 
-          console.log('=== Final name decision:', finalName, '===');
-
-          // Update everything
           this.documentManager.companyName = finalName;
           this.documentManager.updateDocumentTitle();
 
-          // Update input field to show what we're using
           if (this.companyNameInput) {
               this.companyNameInput.value = finalName;
           }
 
-          // Save to background
           await browser.runtime.sendMessage({
               type: 'set-tab-company-name',
               tabId: tab.id,
               companyName: finalName
           });
 
+          // NEW: Get automation ID for tracking
+          const automationStatus = await browser.runtime.sendMessage({
+              type: 'get-automation-status',
+              tabId: tab.id
+          });
+          const automationId = automationStatus?.automationId;
+
+          // NEW: Notify background that download is starting
+          if (automationId) {
+              await browser.runtime.sendMessage({
+                  type: 'docx-download-started',
+                  automationId: automationId
+              });
+          }
+
           console.log('=== DOWNLOAD DEBUG END ===');
 
-          // Download
-          this.documentManager.downloadDocx();
+          // Perform download with automation ID
+          await this.documentManager.downloadDocx(automationId);
       });
       this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
@@ -1134,7 +1132,7 @@ class DocumentManager {
         this.saveDocumentState();
     }
 
-    async downloadDocx() {
+    async downloadDocx(automationId = null) {
         if (!this.hasResponses()) {
             alert('No responses to download');
             return;
@@ -1186,10 +1184,20 @@ class DocumentManager {
 
             console.log('HTML-formatted DOCX downloaded successfully:', filename);
 
+            // NEW: Notify background that download completed
+            if (automationId) {
+                setTimeout(async () => {
+                    await browser.runtime.sendMessage({
+                        type: 'docx-download-completed',
+                        automationId: automationId
+                    });
+                }, 1000);
+            }
+
         } catch (error) {
             console.error('Failed to generate HTML DOCX:', error);
             console.log('Falling back to plain text method');
-            return this.downloadDocxPlainText();
+            return this.downloadDocxPlainText(automationId);
         }
     }
 
