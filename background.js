@@ -1478,28 +1478,44 @@ class BackgroundDocumentManager {
     }
 
     addResponse(promptIndex, promptText, responseText) {
-        const responseData = {
-            index: promptIndex,
-            prompt: promptText,
-            response: responseText,
-            timestamp: new Date().toISOString()
-        };
+      // ENHANCED: Multiple deduplication checks
 
-        // Add or update response
-        const existingIndex = this.document.responses.findIndex(r => r.index === promptIndex);
-        if (existingIndex >= 0) {
-            this.document.responses[existingIndex] = responseData;
-        } else {
-            this.document.responses.push(responseData);
-        }
+      // Check 1: Exact index match
+      const existingByIndex = this.document.responses.findIndex(r => r.index === promptIndex);
 
-        // Sort responses by index
-        this.document.responses.sort((a, b) => a.index - b.index);
+      // Check 2: Content similarity (prevent content duplicates with different indices)
+      const existingByContent = this.document.responses.findIndex(r =>
+        r.response && responseText &&
+        r.response.trim() === responseText.trim() &&
+        Math.abs(r.index - promptIndex) <= 1 // Allow small index variations
+      );
 
-        this.document.completedPrompts = this.document.responses.length;
-        this.saveDocumentState();
+      const responseData = {
+        index: promptIndex,
+        prompt: promptText,
+        response: responseText,
+        timestamp: new Date().toISOString()
+      };
 
-        console.log(`Background document: Added response ${promptIndex + 1}, total: ${this.getResponseCount()}`);
+      if (existingByIndex >= 0) {
+        // Replace existing response with same index
+        this.document.responses[existingByIndex] = responseData;
+        console.log(`Background: Updated response ${promptIndex + 1} (index match)`);
+      } else if (existingByContent >= 0) {
+        // Don't add if content already exists
+        console.log(`Background: Skipped duplicate content for response ${promptIndex + 1}`);
+        return;
+      } else {
+        // Add new response
+        this.document.responses.push(responseData);
+        console.log(`Background: Added new response ${promptIndex + 1}`);
+      }
+
+      // Sort responses by index
+      this.document.responses.sort((a, b) => a.index - b.index);
+
+      this.document.completedPrompts = this.document.responses.length;
+      this.saveDocumentState();
     }
 
     getResponseCount() {

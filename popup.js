@@ -1091,22 +1091,56 @@ class DocumentManager {
     }
 
     addResponse(promptNumber, promptText, responseText) {
-        const response = {
-            promptNumber,
-            promptText,
-            responseText,
-            timestamp: new Date().toISOString()
-        };
+      // ENHANCED: Multiple deduplication strategies
 
-        const existingIndex = this.document.responses.findIndex(r => r.promptNumber === promptNumber);
-        if (existingIndex >= 0) {
-            this.document.responses[existingIndex] = response;
-        } else {
-            this.document.responses.push(response);
-        }
+      // Check 1: Exact prompt number match
+      const existingByNumber = this.document.responses.findIndex(r => r.promptNumber === promptNumber);
 
-        this.document.responses.sort((a, b) => a.promptNumber - b.promptNumber);
-        this.saveDocumentState();
+      // Check 2: Content hash comparison (prevent identical content)
+      const responseHash = this.hashContent(responseText);
+      const existingByHash = this.document.responses.findIndex(r =>
+        this.hashContent(r.responseText) === responseHash &&
+        Math.abs(r.promptNumber - promptNumber) <= 1
+      );
+
+      const response = {
+        promptNumber,
+        promptText,
+        responseText,
+        timestamp: new Date().toISOString(),
+        contentHash: responseHash // Store hash for future comparisons
+      };
+
+      if (existingByNumber >= 0) {
+        // Replace existing response with same prompt number
+        this.document.responses[existingByNumber] = response;
+        console.log(`Popup: Updated response ${promptNumber} (number match)`);
+      } else if (existingByHash >= 0) {
+        // Skip if identical content already exists
+        console.log(`Popup: Skipped duplicate content for response ${promptNumber}`);
+        return;
+      } else {
+        // Add new unique response
+        this.document.responses.push(response);
+        console.log(`Popup: Added new response ${promptNumber}`);
+      }
+
+      this.document.responses.sort((a, b) => a.promptNumber - b.promptNumber);
+      this.saveDocumentState();
+    }
+
+    // ADD: Content hashing method
+    hashContent(content) {
+      if (!content) return '';
+      // Simple hash function for content comparison
+      let hash = 0;
+      const cleanContent = content.trim().substring(0, 1000); // Use first 1000 chars
+      for (let i = 0; i < cleanContent.length; i++) {
+        const char = cleanContent.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
+      }
+      return hash.toString();
     }
 
     getResponseCount() {

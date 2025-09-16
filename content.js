@@ -191,7 +191,9 @@ class PerplexityAutomator {
     // NEW: Initialize adaptive selector manager for robust element discovery
     this.adaptiveSelector = new AdaptiveSelectorManager({
       input: [
-        // Primary strategies for input elements
+        // NEW: Primary Perplexity selector
+        '#ask-input',
+        // EXISTING: Keep all current selectors as fallbacks
         'textarea',
         'textarea[placeholder*="Ask" i]',
         'textarea[placeholder*="search" i]',
@@ -228,7 +230,27 @@ class PerplexityAutomator {
         '[data-testid*="send" i]'
       ],
       responseContainer: [
-        // Enhanced strategies for AI response containers
+        // NEW: Primary Perplexity AI response selectors (for responses 0-49)
+        '#markdown-content-0', '#markdown-content-1', '#markdown-content-2',
+        '#markdown-content-3', '#markdown-content-4', '#markdown-content-5',
+        '#markdown-content-6', '#markdown-content-7', '#markdown-content-8',
+        '#markdown-content-9', '#markdown-content-10', '#markdown-content-11',
+        '#markdown-content-12', '#markdown-content-13', '#markdown-content-14',
+        '#markdown-content-15', '#markdown-content-16', '#markdown-content-17',
+        '#markdown-content-18', '#markdown-content-19', '#markdown-content-20',
+        '#markdown-content-21', '#markdown-content-22', '#markdown-content-23',
+        '#markdown-content-24', '#markdown-content-25', '#markdown-content-26',
+        '#markdown-content-27', '#markdown-content-28', '#markdown-content-29',
+        '#markdown-content-30', '#markdown-content-31', '#markdown-content-32',
+        '#markdown-content-33', '#markdown-content-34', '#markdown-content-35',
+        '#markdown-content-36', '#markdown-content-37', '#markdown-content-38',
+        '#markdown-content-39', '#markdown-content-40', '#markdown-content-41',
+        '#markdown-content-42', '#markdown-content-43', '#markdown-content-44',
+        '#markdown-content-45', '#markdown-content-46', '#markdown-content-47',
+        '#markdown-content-48', '#markdown-content-49',
+        // NEW: General markdown content pattern for any additional responses
+        '[id^="markdown-content-"]',
+        // EXISTING: Keep all current selectors as fallbacks
         '[data-message-author="ai"]',
         '[data-author="ai"]',
         '.conversation-thread [data-author="ai"]',
@@ -440,6 +462,47 @@ class PerplexityAutomator {
     browser.runtime.sendMessage({ type: 'content-script-ready' });
   }
 
+  async findLatestMarkdownResponse(excludeElements = new Set()) {
+    let highestIndex = -1;
+    let latestResponse = null;
+
+    // Check for responses up to index 49 (50 total prompts)
+    for (let i = 0; i <= 49; i++) {
+      const selector = `#markdown-content-${i}`;
+      const element = document.querySelector(selector);
+
+      // CRITICAL: Skip if this element was present initially
+      if (element &&
+          !excludeElements.has(element) &&
+          this.isVisible(element) &&
+          element.textContent.trim().length > 50) {
+
+        if (i > highestIndex) {
+          highestIndex = i;
+          latestResponse = element;
+        }
+      }
+    }
+
+    // Fallback to general pattern only if no specific numbered response found
+    if (!latestResponse) {
+      const generalElements = document.querySelectorAll('[id^="markdown-content-"]');
+      const validElements = Array.from(generalElements)
+        .filter(el => !excludeElements.has(el) && this.isVisible(el))
+        .map(el => ({
+          element: el,
+          index: parseInt(el.id.replace('markdown-content-', '')) || 0
+        }))
+        .sort((a, b) => b.index - a.index);
+
+      if (validElements.length > 0) {
+        latestResponse = validElements[0].element;
+      }
+    }
+
+    return latestResponse;
+  }
+
   async executePrompt(prompt, index) {
     if (!this.isReady || this.isExecuting) return;
     this.isExecuting = true;
@@ -529,37 +592,65 @@ class PerplexityAutomator {
 
   async waitForResponseText(timeout) {
     const start = Date.now();
-    const initial = new Set(document.querySelectorAll(this.adaptiveSelector.strategies.responseContainer.join(',')));
+
+    // Store initial state of ALL possible response elements
+    const initialElements = new Set([
+      ...document.querySelectorAll(this.adaptiveSelector.strategies.responseContainer.join(',')),
+      ...document.querySelectorAll('[id^="markdown-content-"]')
+    ]);
+
     return new Promise(resolve => {
-      let stable = 0, lastLen = 0;
-      const check = () => {
-        const nodes = Array.from(document.querySelectorAll(this.adaptiveSelector.strategies.responseContainer.join(',')));
-        const node = nodes.reverse().find(n => !initial.has(n) && this.isVisible(n));
-        if (node) {
-          // CHANGED: Extract HTML content instead of plain text
-              const htmlContent = this.extractHTMLContent(node);
-              const textLength = node.innerText.trim().length;
+      let stable = 0, lastLen = 0, lastResponseElement = null;
 
-              if (textLength === lastLen) {
-                  if (++stable >= 3) {
-                      return resolve({
-                          responseText: htmlContent,  // Return HTML instead of plain text
-                          startTime: start
-                      });
-                  }
-              } else {
-                  lastLen = textLength;
-                  stable = 0;
-              }
-          }
+      const check = async () => {
+        let responseElement = null;
 
-          if (Date.now() - start > timeout) {
+        // SINGLE DETECTION PATH - Priority order with NO OVERLAP
+
+        // Priority 1: Try new markdown detection first
+        responseElement = await this.findLatestMarkdownResponse(initialElements);
+
+        // Priority 2: Only if markdown detection finds nothing, use fallback
+        if (!responseElement) {
+          const fallbackNodes = Array.from(document.querySelectorAll(
+            this.adaptiveSelector.strategies.responseContainer.join(',')
+          ));
+          responseElement = fallbackNodes.reverse()
+            .find(n => !initialElements.has(n) && this.isVisible(n));
+        }
+
+        // CRITICAL: Ensure we're tracking the same element across checks
+        if (responseElement && responseElement !== lastResponseElement) {
+          // New response found, reset stability counter
+          lastResponseElement = responseElement;
+          stable = 0;
+          lastLen = 0;
+        }
+
+        if (responseElement) {
+          const htmlContent = this.extractHTMLContent(responseElement);
+          const textLength = responseElement.innerText.trim().length;
+
+          if (textLength === lastLen && textLength > 0) {
+            if (++stable >= 3) {
               return resolve({
-                  responseText: '',
-                  error: `AI response timeout after ${timeout/1000}s`
+                responseText: htmlContent,
+                startTime: start
               });
+            }
+          } else {
+            lastLen = textLength;
+            stable = 0;
           }
-          setTimeout(check, 1000);
+        }
+
+        if (Date.now() - start > timeout) {
+          return resolve({
+            responseText: '',
+            error: `AI response timeout after ${timeout/1000}s`
+          });
+        }
+        setTimeout(check, 1000);
       };
       check();
     });
