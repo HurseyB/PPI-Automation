@@ -2,13 +2,6 @@
  * Enhanced Perplexity AI Automator - Background Script
  * Fixed: Increased timeouts and proper sequencing
  */
-const tabCompanyMap = {};
-
-// === Added: Cleanup when tabs are closed ===
-browser.tabs.onRemoved.addListener((tabId) => {
-  delete tabCompanyMap[tabId];
-});
-
 
 class AutomationManager {
     constructor() {
@@ -35,7 +28,6 @@ class AutomationManager {
         this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
         this.tabCompanyNames = new Map(); // tabId -> company name
         this.tabTimeouts = new Map(); // tabId -> timeout reference
-        this.tabDocuments = new Map(); // tabId -> document state
         this.downloadTracking = new Map(); // automationId -> download status
         this.initializeBackground();
     }
@@ -71,15 +63,6 @@ class AutomationManager {
         browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             this.handleMessage(message, sender, sendResponse);
             return true;
-        });
-
-        // === Added: Save company name per tab ===
-        browser.runtime.onMessage.addListener((message, sender) => {
-          if (message.type === 'SAVE_COMPANY_NAME' && sender.tab && sender.tab.id != null) {
-            tabCompanyMap[sender.tab.id] = message.companyName;
-            // Optionally acknowledge receipt:
-            return Promise.resolve({ status: 'OK' });
-          }
         });
     }
 
@@ -225,6 +208,17 @@ class AutomationManager {
           const permissionGranted = await this.ensureNotificationPermission();
           sendResponse({ success: permissionGranted });
           break;
+        case 'get-document-data':
+            // Use tab-specific document data if tabId provided
+            // NEW: Require tabId to be explicitly provided
+            const requestedTabId = message.tabId;
+            if (!requestedTabId) {
+              sendResponse({ error: 'tabId is required for get-document-data' });
+              break;
+            }
+            const documentData = await this.getTabDocumentData(requestedTabId);
+            sendResponse(documentData);
+            break;
         case 'clear-background-document':
             const clearTabId = message.tabId || this.currentTabId;
             const clearManager = this.getTabDocumentManager(clearTabId);
@@ -242,23 +236,8 @@ class AutomationManager {
             sendResponse({ success: true });
             break;
         case 'get-tab-document-data':
-            // Use tab-specific document data if tabId provided
-            // NEW: Require tabId to be explicitly provided
-             const requestedTabId = message.tabId;
-            if (!requestedTabId) {
-              sendResponse({ error: 'tabId is required for get-document-data' });
-              break;
-            }
-            const documentData = await this.getTabDocumentData(requestedTabId);
-            // CRITICAL FIX: Ensure company name is included in response
-            if (documentData && !documentData.companyName) {
-              // Try to get company name from tab-specific storage
-              const tabCompanyName = this.tabCompanyNames.get(requestedTabId);
-              if (tabCompanyName && tabCompanyName !== 'Company') {
-                documentData.companyName = tabCompanyName;
-              }
-            }
-            sendResponse(documentData);
+            const tabDocumentData = await this.getTabDocumentData(message.tabId);
+            sendResponse(tabDocumentData);
             break;
         case 'clear-tab-document':
             const manager = this.getTabDocumentManager(message.tabId);
@@ -290,24 +269,6 @@ class AutomationManager {
             await this.cleanupAfterDownload(message.automationId);
             sendResponse({ success: true });
             break;
-        case 'get-tab-company-name':
-          // CRITICAL FIX: Return per-tab company name with proper fallback
-          const requestedTab = message.tabId || sender.tab?.id;
-          let tabName = 'Company';
-          
-          // First check tab-specific company names map
-          if (this.tabCompanyNames.has(requestedTab)) {
-            tabName = this.tabCompanyNames.get(requestedTab);
-          } else {
-            // Fallback: check document manager for this tab
-            const docManager = this.getTabDocumentManager(requestedTab);
-            if (docManager && docManager.companyName && docManager.companyName !== 'Company') {
-              tabName = docManager.companyName;
-            }
-          }
-          
-          sendResponse({ companyName: tabName });
-          break;
         default:
           this.logError('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -366,15 +327,15 @@ class AutomationManager {
       if (!prompts || prompts.length === 0) {
           throw new Error('No prompts provided');
       }
-      
-      // CRITICAL FIX: Store company name BEFORE any other operations
-      this.tabCompanyNames.set(tabId, companyName || 'Company');
 
       // Validate tab
       const isValid = await this.validateTab(tabId);
       if (!isValid) {
           throw new Error('Invalid tab or not on Perplexity.ai');
       }
+
+      // Store company name for this tab
+      await this.setTabCompanyName(tabId, companyName);
 
       // Initialize per-tab automation state
       const tabState = {
@@ -392,9 +353,6 @@ class AutomationManager {
       };
 
       this.tabAutomations.set(tabId, tabState);
-
-      // Store company name in multiple places for redundancy
-      await this.setTabCompanyName(tabId, companyName || 'Company');
 
       // Update minimal global state for backward compatibility
       this.isRunning = this.hasRunningAutomation();
@@ -468,13 +426,6 @@ class AutomationManager {
 
     // // Clear tab-specific timeout
     this.clearCurrentTimeout(tabId);
-    
-    // NEW: Clear all tab-specific storage when stopping automation
-    try {
-      await this.clearTabSpecificStorage(tabId);
-    } catch (error) {
-      this.logError('Failed to clear tab storage:', error);
-    }
 
     // Notify content script to stop
       try {
@@ -1432,29 +1383,7 @@ class AutomationManager {
   // Per-tab company name management
   async setTabCompanyName(tabId, companyName) {
       this.tabCompanyNames.set(tabId, companyName || 'Company');
-      
-      // Also update the document manager for this tab
-      const manager = this.getTabDocumentManager(tabId);
-      manager.companyName = companyName || 'Company';
-      
       this.log(`Company name set for tab ${tabId}: ${companyName || 'Company'}`);
-  }
-
-  // NEW: Load persisted tab company names on startup
-  async loadPersistedTabCompanyNames() {
-      try {
-          const result = await browser.storage.local.get();
-          Object.keys(result).forEach(key => {
-              if (key.startsWith('tabCompanyName_')) {
-                  const tabId = parseInt(key.replace('tabCompanyName_', ''));
-                  if (!isNaN(tabId)) {
-                      this.tabCompanyNames.set(tabId, result[key]);
-                  }
-              }
-          });
-      } catch (error) {
-          this.logError('Failed to load persisted tab company names:', error);
-      }
   }
 
   // Get per-tab document manager
@@ -1467,34 +1396,14 @@ class AutomationManager {
       return this.tabDocumentManagers.get(tabId);
   }
 
-  // NEW: Get tab-specific company name
-  getTabCompanyName(tabId) {
-      return this.tabCompanyNames.get(tabId) || 'Company';
-  }
-
-  // NEW: Set tab-specific company name with persistence
-  async setTabCompanyName(tabId, companyName) {
-      const cleanName = companyName && companyName.trim() !== 'Company' ? companyName.trim() : 'Company';
-      this.tabCompanyNames.set(tabId, cleanName);
-      
-      // Store in browser storage for persistence
-      try {
-          await browser.storage.local.set({ [`tabCompanyName_${tabId}`]: cleanName });
-      } catch (error) {
-          this.logError('Failed to persist tab company name:', error);
-      }
-  }
-
   // Get per-tab document data
   async getTabDocumentData(tabId) {
       const manager = this.getTabDocumentManager(tabId);
       const data = manager.getDocumentData();
       // Include company name in response
       return {
-          document: manager.document,
-          companyName: this.getTabCompanyName(tabId),
-          responseCount: manager.getResponseCount(),
-          tabId: tabId
+          ...data,
+          companyName: this.tabCompanyNames.get(tabId) || 'Company'
       };
   }
 
@@ -1502,32 +1411,10 @@ class AutomationManager {
   cleanupTabState(tabId) {
     this.clearTabTimeout(tabId);
     this.tabAutomations.delete(tabId);
-    // NEW: Clear tab-specific storage when tab is removed
-    this.clearTabSpecificStorage(tabId).catch(error => {
-      this.logError('Failed to clear tab storage on cleanup:', error);
-    });
     this.tabDocumentManagers.delete(tabId);
     this.tabCompanyNames.delete(tabId);
     this.tabTimeouts.delete(tabId);
     this.log(`Cleaned up state for tab ${tabId}`);
-  }
-  
-  // NEW: Clear all tab-specific storage
-  async clearTabSpecificStorage(tabId) {
-    try {
-      const keysToRemove = [
-        `backgroundDocument_tab_${tabId}`,
-        `popupDocument_tab_${tabId}`,
-        `tabState_${tabId}`,
-        `companyName_tab_${tabId}`
-      ];
-      
-      // Remove all tab-specific keys
-      await browser.storage.local.remove(keysToRemove);
-      this.log(`Cleared storage for tab ${tabId}`);
-    } catch (error) {
-      this.logError('Failed to clear tab storage:', error);
-    }
   }
 }
 
@@ -1538,7 +1425,6 @@ class AutomationManager {
 class BackgroundDocumentManager {
     constructor() {
       this.tabId = null; // Track which tab this belongs to
-      this.companyName = 'Company';
       this.document = {
         title: 'Perplexity AI Automation Results',
         timestamp: null,
@@ -1553,7 +1439,7 @@ class BackgroundDocumentManager {
 
     // NEW: Get tab-specific storage key
     getStorageKey() {
-      return this.tabId ? `backgroundDocument_tab_${this.tabId}` : `backgroundDocument_fallback_${Date.now()}`;
+      return this.tabId ? `backgroundDocument_tab_${this.tabId}` : 'backgroundDocument';
     }
 
     async loadDocumentState() {
@@ -1663,8 +1549,7 @@ class BackgroundDocumentManager {
         return {
             document: this.document,
             responseCount: this.getResponseCount(),
-            hasResponses: this.hasResponses(),
-            // companyName is retrieved by popup via new API
+            hasResponses: this.hasResponses()
         };
     }
 }
