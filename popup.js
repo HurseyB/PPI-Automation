@@ -324,21 +324,20 @@ class PerplexityAutomator {
 
            // Get tab and request stored company name
           const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-
-          // NEW: Get the stored company name for this specific tab
-          const { companyName } = await browser.runtime.sendMessage({
-              type: 'get-tab-company-name',
-              tabId: tab.id
+          
+          // CRITICAL FIX: Get tab-specific document data which includes company name
+          const tabDocumentData = await browser.runtime.sendMessage({
+            type: 'get-tab-document-data',
+            tabId: tab.id
           });
 
-          let finalName = companyName || 'Company';
-          /*  REMOVED - old logic that caused cross-tab contamination
-          } else if (storedName && storedName !== 'Company') {
-              finalName = storedName;
-          } else if (inputName && inputName !== 'Company') {
-              finalName = inputName;
+          // Use company name from tab-specific document data, fallback to input field
+          let finalName = 'Company';
+          if (tabDocumentData && tabDocumentData.companyName && tabDocumentData.companyName !== 'Company') {
+            finalName = tabDocumentData.companyName;
+          } else if (this.companyNameInput && this.companyNameInput.value.trim() && this.companyNameInput.value.trim() !== 'Company') {
+            finalName = this.companyNameInput.value.trim();
           }
-          */
 
           this.documentManager.companyName = finalName;
           this.documentManager.updateDocumentTitle();
@@ -1083,9 +1082,13 @@ class DocumentManager {
             });
             
             if (tabData) {
+                // CRITICAL FIX: Always update company name from background data
                 if (tabData.companyName && tabData.companyName !== 'Company') {
                     this.companyName = tabData.companyName;
                     this.updateDocumentTitle();
+                    console.log(`Tab ${this.tabId} company name loaded:`, tabData.companyName);
+                } else {
+                    console.log(`Tab ${this.tabId} no company name in background data`);
                 }
                 
                 if (tabData.document && tabData.document.responses) {

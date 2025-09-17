@@ -225,17 +225,6 @@ class AutomationManager {
           const permissionGranted = await this.ensureNotificationPermission();
           sendResponse({ success: permissionGranted });
           break;
-        case 'get-document-data':
-            // Use tab-specific document data if tabId provided
-            // NEW: Require tabId to be explicitly provided
-            const requestedTabId = message.tabId;
-            if (!requestedTabId) {
-              sendResponse({ error: 'tabId is required for get-document-data' });
-              break;
-            }
-            const documentData = await this.getTabDocumentData(requestedTabId);
-            sendResponse(documentData);
-            break;
         case 'clear-background-document':
             const clearTabId = message.tabId || this.currentTabId;
             const clearManager = this.getTabDocumentManager(clearTabId);
@@ -253,8 +242,23 @@ class AutomationManager {
             sendResponse({ success: true });
             break;
         case 'get-tab-document-data':
-            const tabDocumentData = await this.getTabDocumentData(message.tabId);
-            sendResponse(tabDocumentData);
+            // Use tab-specific document data if tabId provided
+            // NEW: Require tabId to be explicitly provided
+             const requestedTabId = message.tabId;
+            if (!requestedTabId) {
+              sendResponse({ error: 'tabId is required for get-document-data' });
+              break;
+            }
+            const documentData = await this.getTabDocumentData(requestedTabId);
+            // CRITICAL FIX: Ensure company name is included in response
+            if (documentData && !documentData.companyName) {
+              // Try to get company name from tab-specific storage
+              const tabCompanyName = this.tabCompanyNames.get(requestedTabId);
+              if (tabCompanyName && tabCompanyName !== 'Company') {
+                documentData.companyName = tabCompanyName;
+              }
+            }
+            sendResponse(documentData);
             break;
         case 'clear-tab-document':
             const manager = this.getTabDocumentManager(message.tabId);
@@ -287,9 +291,21 @@ class AutomationManager {
             sendResponse({ success: true });
             break;
         case 'get-tab-company-name':
-          // Return per-tab company name
+          // CRITICAL FIX: Return per-tab company name with proper fallback
           const requestedTab = message.tabId || sender.tab?.id;
-          const tabName = this.tabCompanyNames.get(requestedTab) || 'Company';
+          let tabName = 'Company';
+          
+          // First check tab-specific company names map
+          if (this.tabCompanyNames.has(requestedTab)) {
+            tabName = this.tabCompanyNames.get(requestedTab);
+          } else {
+            // Fallback: check document manager for this tab
+            const docManager = this.getTabDocumentManager(requestedTab);
+            if (docManager && docManager.companyName && docManager.companyName !== 'Company') {
+              tabName = docManager.companyName;
+            }
+          }
+          
           sendResponse({ companyName: tabName });
           break;
         default:
