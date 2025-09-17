@@ -43,26 +43,47 @@ class PerplexityAutomator {
     // ADDED: Load document manager state first
         // ENHANCED: Load document manager state with background sync
         this.documentManager.loadDocumentState().then(async () => {
-          // Always sync tab-specific company name from background
-          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-          this.documentManager.setTabId(tab.id);
-          const response = await browser.runtime.sendMessage({
-            type: 'get-tab-document-data',
-            tabId: tab.id
-          });
-          if (response && response.companyName) {
-            // Update popup input to reflect stored company name (even if no responses)
-            if (this.companyNameInput) {
-              this.companyNameInput.value = response.companyName;
+            // Try to sync with background if no data locally
+            if (!this.documentManager.hasResponses()) {
+              // Sync only for current active tab
+              const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+              // Ensure document manager has the correct tab ID
+              this.documentManager.setTabId(tab.id);
+              const response = await browser.runtime.sendMessage({
+                type: 'get-tab-document-data',
+                tabId: tab.id
+              });
+              if (response && response.document && response.document.responses.length > 0) {
+                this.documentManager.document = {
+                  ...response.document,
+                  responses: response.document.responses.map(bg => ({
+                    promptNumber: bg.index + 1,
+                    promptText: bg.prompt,
+                    responseText: bg.response,
+                    timestamp: bg.timestamp
+                  }))
+                };
+                this.documentManager.companyName = response.companyName || this.documentManager.companyName;
+                this.documentManager.updateDocumentTitle();
+                this.documentManager.saveDocumentState();
+
+                // ✅ ADD: Also update the input field if we have a stored company name
+                if (response.companyName && response.companyName !== 'Company' && this.companyNameInput) {
+                    this.companyNameInput.value = response.companyName;
+                    console.log('Restored company name from background:', response.companyName);
+                }
+              }
             }
-            // Sync into documentManager
-            this.documentManager.companyName = response.companyName;
-            this.documentManager.updateDocumentTitle();
-          }
-          // Then restore existing document responses if any
-          if (response && response.document && response.document.responses.length > 0) {
-            // ...populate documentManager.responses...
-          }
+
+            this.updateResponseCount();
+            if (this.documentManager.hasResponses()) {
+                this.enableDownloadButtons();
+                if (this.documentManager.document.summary) {
+                    this.updateDocumentStatus('ready', 'Document ready for download');
+                } else {
+                    this.updateDocumentStatus('partial', 'Partial document available');
+                }
+            }
         });
 
 
@@ -176,10 +197,6 @@ class PerplexityAutomator {
       this.resetAutomationBtn = document.getElementById('resetAutomationBtn');
       this.runningControls = document.querySelector('.running-controls');
       this.companyNameInput = document.getElementById('companyNameInput');
-      // Ensure companyNameInput never defaults to blank
-      if (this.companyNameInput && !this.companyNameInput.value) {
-        this.companyNameInput.value = 'Company';
-      }
 
       // Progress elements (these don't exist in popup, but needed for compatibility)
       this.progressText = null;
@@ -276,24 +293,33 @@ class PerplexityAutomator {
           const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
           const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
 
-          // FIX: use tab-specific name from background, fallback to input
-          let companyName = 'Company';
-          if (tabData?.companyName && tabData.companyName !== 'Company') {
-            companyName = tabData.companyName;
-          } else if (this.companyNameInput?.value.trim()) {
-            companyName = this.companyNameInput.value.trim();
-            // persist updated name
-            await browser.runtime.sendMessage({
+          // Company name resolution (existing logic preserved)
+          const uiState = await browser.storage.local.get('popupUIState');
+          const uiCompanyName = uiState.popupUIState?.companyName;
+          const storedName = tabData?.companyName;
+          const inputName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+
+          let finalName = 'Company';
+          if (uiCompanyName && uiCompanyName !== 'Company') {
+              finalName = uiCompanyName;
+          } else if (storedName && storedName !== 'Company') {
+              finalName = storedName;
+          } else if (inputName && inputName !== 'Company') {
+              finalName = inputName;
+          }
+
+          this.documentManager.companyName = finalName;
+          this.documentManager.updateDocumentTitle();
+
+          if (this.companyNameInput) {
+              this.companyNameInput.value = finalName;
+          }
+
+          await browser.runtime.sendMessage({
               type: 'set-tab-company-name',
               tabId: tab.id,
-              companyName
-            });
-          }
-          this.documentManager.companyName = companyName;
-          this.documentManager.updateDocumentTitle();
-          if (this.companyNameInput) {
-            this.companyNameInput.value = companyName;
-          }
+              companyName: finalName
+          });
 
           // NEW: Get automation ID for tracking
           const automationStatus = await browser.runtime.sendMessage({
@@ -1167,15 +1193,10 @@ class DocumentManager {
                 }
             });
 
-            // FIXED: Use the companyName stored in this DocumentManager instance for filename prefix
-            // Ensure we're using the correct company name for THIS tab
-            const safeName = (this.companyName && this.companyName !== 'Company' ? this.companyName : 'Company')
-              .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
-              .replace(/\s+/g, '-');
-
-            console.log('=== FILENAME DEBUG ===');
-            console.log('Document Manager Company Name:', this.companyName);
-            console.log('Safe Name for File:', safeName);
+            // Use the companyName stored in this DocumentManager instance for filename prefix
+            const safeName = (this.companyName || 'Company')
+                .replace(/[<>:"\/\\|?*\x00-\x1F]/g, '')
+                .replace(/\s+/g, '-');
 
             // 2. Format date/time as MM.DD.YYYY-HH.MM.SS
             const now = new Date();
