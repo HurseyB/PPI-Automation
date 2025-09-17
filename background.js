@@ -35,6 +35,7 @@ class AutomationManager {
         this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
         this.tabCompanyNames = new Map(); // tabId -> company name
         this.tabTimeouts = new Map(); // tabId -> timeout reference
+        this.tabDocuments = new Map(); // tabId -> document state
         this.downloadTracking = new Map(); // automationId -> download status
         this.initializeBackground();
     }
@@ -343,15 +344,15 @@ class AutomationManager {
       if (!prompts || prompts.length === 0) {
           throw new Error('No prompts provided');
       }
+      
+      // CRITICAL FIX: Store company name BEFORE any other operations
+      this.tabCompanyNames.set(tabId, companyName || 'Company');
 
       // Validate tab
       const isValid = await this.validateTab(tabId);
       if (!isValid) {
           throw new Error('Invalid tab or not on Perplexity.ai');
       }
-
-      // Store company name for this tab
-      await this.setTabCompanyName(tabId, companyName);
 
       // Initialize per-tab automation state
       const tabState = {
@@ -369,6 +370,9 @@ class AutomationManager {
       };
 
       this.tabAutomations.set(tabId, tabState);
+
+      // Store company name in multiple places for redundancy
+      await this.setTabCompanyName(tabId, companyName || 'Company');
 
       // Update minimal global state for backward compatibility
       this.isRunning = this.hasRunningAutomation();
@@ -1414,6 +1418,23 @@ class AutomationManager {
       this.log(`Company name set for tab ${tabId}: ${companyName || 'Company'}`);
   }
 
+  // NEW: Load persisted tab company names on startup
+  async loadPersistedTabCompanyNames() {
+      try {
+          const result = await browser.storage.local.get();
+          Object.keys(result).forEach(key => {
+              if (key.startsWith('tabCompanyName_')) {
+                  const tabId = parseInt(key.replace('tabCompanyName_', ''));
+                  if (!isNaN(tabId)) {
+                      this.tabCompanyNames.set(tabId, result[key]);
+                  }
+              }
+          });
+      } catch (error) {
+          this.logError('Failed to load persisted tab company names:', error);
+      }
+  }
+
   // Get per-tab document manager
   getTabDocumentManager(tabId) {
       if (!this.tabDocumentManagers.has(tabId)) {
@@ -1424,14 +1445,34 @@ class AutomationManager {
       return this.tabDocumentManagers.get(tabId);
   }
 
+  // NEW: Get tab-specific company name
+  getTabCompanyName(tabId) {
+      return this.tabCompanyNames.get(tabId) || 'Company';
+  }
+
+  // NEW: Set tab-specific company name with persistence
+  async setTabCompanyName(tabId, companyName) {
+      const cleanName = companyName && companyName.trim() !== 'Company' ? companyName.trim() : 'Company';
+      this.tabCompanyNames.set(tabId, cleanName);
+      
+      // Store in browser storage for persistence
+      try {
+          await browser.storage.local.set({ [`tabCompanyName_${tabId}`]: cleanName });
+      } catch (error) {
+          this.logError('Failed to persist tab company name:', error);
+      }
+  }
+
   // Get per-tab document data
   async getTabDocumentData(tabId) {
       const manager = this.getTabDocumentManager(tabId);
       const data = manager.getDocumentData();
       // Include company name in response
       return {
-          ...data,
-          companyName: this.tabCompanyNames.get(tabId) || 'Company'
+          document: manager.document,
+          companyName: this.getTabCompanyName(tabId),
+          responseCount: manager.getResponseCount(),
+          tabId: tabId
       };
   }
 

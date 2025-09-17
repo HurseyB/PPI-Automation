@@ -30,17 +30,18 @@ class PerplexityAutomator {
         this.isRunning = false;
         this.collapsedAll = false;
         this.documentManager = new DocumentManager(); // Document management
-        // Initialize company name in DocumentManager (populated from tab state or UI state)
-        this.documentManager.companyName = '';
-        // NEW: Set current tab ID for document manager
+
+        this.currentTabId = null;
+        // Set current tab ID and initialize document manager state
         browser.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-          this.documentManager.setTabId(tab.id);
+            this.currentTabId = tab.id;
+            this.documentManager.setTabId(tab.id);
         });
         this.initializeElements();
         this.initializeNotificationSettings();
         this.bindEventListeners();
         this.loadPrompts();
-    // ADDED: Load document manager state first
+        // ADDED: Load document manager state first
         // ENHANCED: Load document manager state with background sync
         this.documentManager.loadDocumentState().then(async () => {
             // Try to sync with background if no data locally
@@ -89,7 +90,9 @@ class PerplexityAutomator {
             }
         });
 
+        
 
+        
         this.loadUIState().then(async state => {  // <- ADD 'async' HERE
             if (!state) return;
 
@@ -186,6 +189,28 @@ class PerplexityAutomator {
         });
         this.setupMessageListener();
     }
+
+    // NEW: Load tab-specific state on initialization
+            async loadTabSpecificState() {  //This is line 97
+                if (!this.currentTabId) return;
+
+                try {
+                    const tabData = await browser.runtime.sendMessage({
+                        type: 'get-tab-document-data',
+                        tabId: this.currentTabId
+                    });
+
+                    if (tabData && tabData.companyName && tabData.companyName !== 'Company') {
+                        this.documentManager.companyName = tabData.companyName;
+                        this.documentManager.updateDocumentTitle();
+                        if (this.companyNameInput) {
+                            this.companyNameInput.value = tabData.companyName;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to load tab-specific state:', error);
+                }
+            }
 
     initializeElements() {
       // Only keep elements that exist in simplified popup
@@ -360,18 +385,19 @@ class PerplexityAutomator {
       // Company name change handler - ensure tab-specific updates
       if (this.companyNameInput) {
         this.companyNameInput.addEventListener('input', async () => {
-          const companyName = this.companyNameInput.value.trim();
-          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+          const companyName = this.companyNameInput.value.trim() || 'Company';
+          const tabId = this.currentTabId || (await browser.tabs.query({ active: true, currentWindow: true }))[0].id;
+                           
           
-          // Update both document manager and background state for THIS specific tab
-          this.documentManager.companyName = companyName || 'Company';
+          // CRITICAL FIX: Update document manager with tab isolation
+          this.documentManager.companyName = companyName;
           this.documentManager.updateDocumentTitle();
           
-          // Save to tab-specific background storage
+          // Save to tab-specific storage immediately
           await browser.runtime.sendMessage({
             type: 'set-tab-company-name',
-            tabId: tab.id,
-            companyName: companyName || 'Company'
+            tabId: tabId,
+            companyName: companyName
           });
           
           // Update tab title in real-time
@@ -852,31 +878,23 @@ class PerplexityAutomator {
                 return;
             }
 
-            const companyName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+            // CRITICAL FIX: Get company name from current document manager state
+            const companyName = this.documentManager.companyName || 'Company';
+            const tabId = this.currentTabId || tab.id;
 
-            // CRITICAL: Set company name BEFORE starting automation
-            this.documentManager.companyName = companyName || 'Company';
-            this.documentManager.updateDocumentTitle(); // ← ADD THIS LINE
-            
-            // Store company name for this specific tab
-            await browser.runtime.sendMessage({
-              type: 'set-tab-company-name',
-              tabId: tab.id,
-              companyName: companyName || 'Company'
-            });
-
-            // Update tab title when starting automation
-            if (companyName) {
-              await this.updateTabTitle(companyName);
-
+            // Ensure document manager has correct company name before automation
+            if (this.companyNameInput && this.companyNameInput.value.trim()) {
+                this.documentManager.companyName = this.companyNameInput.value.trim();
+                this.documentManager.updateDocumentTitle();
             }
+
             const promptsToSend = this.prompts.map(prompt => {
               // prompt is now an object with { text, pauseAfter }
               let txt = prompt.text;
-              if (companyName) {
+              if (this.documentManager.companyName && this.documentManager.companyName !== 'Company') {
                 // replace company placeholder if desired
                 // txt = txt.replace(/\[Company\]/g, companyName);
-                txt = txt.replace(/\[Company Name\]/g, companyName);
+                txt = txt.replace(/\[Company Name\]/g, this.documentManager.companyName);
               }
               return { text: txt, pauseAfter: !!prompt.pauseAfter };
             });
@@ -884,8 +902,8 @@ class PerplexityAutomator {
             await browser.runtime.sendMessage({
               type: 'start-automation',
               prompts: promptsToSend,
-              tabId: tab.id,
-              companyName: companyName || ''
+              tabId: tabId,
+              companyName: this.documentManager.companyName
             });
 
             this.updateAutomationButton();
@@ -1040,8 +1058,9 @@ class DocumentManager {
     constructor() {
         this.companyName = 'Company';
         this.tabId = null; // Track which tab this belongs to
+        // CRITICAL FIX: Initialize with empty document template
         this.document = {
-            title: `Business Analyses for ${this.companyName}`,
+            title: 'Business Analyses for Company',
             timestamp: null,
             responses: [],
             summary: null
@@ -1051,11 +1070,44 @@ class DocumentManager {
     // NEW: Set the tab ID for this document manager
     setTabId(tabId) {
       this.tabId = tabId;
+      this.loadTabSpecificDocument();
+    }
+    
+    // NEW: Load tab-specific document state
+    async loadTabSpecificDocument() {
+        if (!this.tabId) return;
+        
+        try {
+            const tabData = await browser.runtime.sendMessage({ 
+                type: 'get-tab-document-data', 
+                tabId: this.tabId 
+            });
+            
+            if (tabData) {
+                if (tabData.companyName && tabData.companyName !== 'Company') {
+                    this.companyName = tabData.companyName;
+                    this.updateDocumentTitle();
+                }
+                
+                if (tabData.document && tabData.document.responses) {
+                    // Sync document responses if available
+                    this.document.responses = tabData.document.responses.map(bg => ({
+                        promptNumber: bg.index + 1,
+                        promptText: bg.prompt,
+                        responseText: bg.response,
+                        timestamp: bg.timestamp
+                    }));
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load tab-specific document:', error);
+        }
     }
 
     // NEW: Get tab-specific storage key
     getStorageKey() {
-      return this.tabId ? `popupDocument_tab_${this.tabId}` : `popupDocument_fallback_${Date.now()}`;
+      // CRITICAL FIX: Always use tabId for storage key
+      return this.tabId ? `popupDocument_tab_${this.tabId}` : 'popupDocument_notab_fallback';
     }
 
     async loadDocumentState() {
@@ -1104,13 +1156,6 @@ class DocumentManager {
                         timestamp: bgResponse.timestamp
                     }))
                 };
-                
-                // CRITICAL: Also sync company name
-                if (response.companyName && response.companyName !== 'Company') {
-                  this.companyName = response.companyName;
-                  this.updateDocumentTitle();
-                }
-                
                 
                 await this.saveDocumentState();
                 console.log('Synced with background:', this.getResponseCount(), 'responses');
@@ -1207,16 +1252,10 @@ class DocumentManager {
         // CRITICAL FIX: Always get the current tab's company name before download
         try {
           const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-          const tabData = await browser.runtime.sendMessage({ 
-            type: 'get-tab-document-data', 
-            tabId: tab.id 
-          });
+
           
-          // Use the tab-specific company name if available
-          if (tabData && tabData.companyName && tabData.companyName !== 'Company') {
-            this.companyName = tabData.companyName;
-            this.updateDocumentTitle();
-          }
+          // Use the document manager's company name (already synced)
+          // Company name should already be set correctly from tab-specific loading
         } catch (error) {
           console.error('Failed to get current tab company name:', error);
         }
@@ -1285,7 +1324,9 @@ class DocumentManager {
     }
 
     updateDocumentTitle() {
-        this.document.title = `Business Analyses for ${this.companyName}`;
+        // CRITICAL FIX: Use current company name, not placeholder
+        const displayName = this.companyName && this.companyName !== 'Company' ? this.companyName : 'Company';
+        this.document.title = `Business Analyses for ${displayName}`;
         console.log('Document title updated:', this.document.title);
         this.saveDocumentState();
     }
@@ -1511,15 +1552,9 @@ class DocumentManager {
         // CRITICAL FIX: Always get the current tab's company name before download
         try {
           const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-          const tabData = await browser.runtime.sendMessage({ 
-            type: 'get-tab-document-data', 
-            tabId: tab.id 
-          });
           
-          // Use the tab-specific company name if available
-          if (tabData && tabData.companyName && tabData.companyName !== 'Company') {
-            this.companyName = tabData.companyName;
-          }
+           // Use the document manager's company name (already synced)
+           // Company name should already be set correctly from tab-specific loading
         } catch (error) {
           console.error('Failed to get current tab company name:', error);
         }
