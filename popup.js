@@ -293,33 +293,23 @@ class PerplexityAutomator {
           const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
           const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
 
-          // Company name resolution (existing logic preserved)
-          const uiState = await browser.storage.local.get('popupUIState');
-          const uiCompanyName = uiState.popupUIState?.companyName;
-          const storedName = tabData?.companyName;
-          const inputName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
-
-          let finalName = 'Company';
-          if (uiCompanyName && uiCompanyName !== 'Company') {
-              finalName = uiCompanyName;
-          } else if (storedName && storedName !== 'Company') {
-              finalName = storedName;
-          } else if (inputName && inputName !== 'Company') {
-              finalName = inputName;
-          }
-
-          this.documentManager.companyName = finalName;
-          this.documentManager.updateDocumentTitle();
-
-          if (this.companyNameInput) {
-              this.companyNameInput.value = finalName;
-          }
-
-          await browser.runtime.sendMessage({
+          // FIXED: Get company name directly from tab-specific background data
+          let companyName = 'Company';
+          if (tabData && tabData.companyName && tabData.companyName !== 'Company') {
+            companyName = tabData.companyName;
+          } else if (this.companyNameInput && this.companyNameInput.value.trim()) {
+            companyName = this.companyNameInput.value.trim();
+            // Update background with the current input value
+            await browser.runtime.sendMessage({
               type: 'set-tab-company-name',
               tabId: tab.id,
-              companyName: finalName
-          });
+              companyName: companyName
+            });
+          }
+
+          // FIXED: Set company name in document manager for THIS tab's download
+          this.documentManager.companyName = companyName;
+          this.documentManager.updateDocumentTitle();
 
           // NEW: Get automation ID for tracking
           const automationStatus = await browser.runtime.sendMessage({
@@ -1193,10 +1183,15 @@ class DocumentManager {
                 }
             });
 
-            // Use the companyName stored in this DocumentManager instance for filename prefix
-            const safeName = (this.companyName || 'Company')
-                .replace(/[<>:"\/\\|?*\x00-\x1F]/g, '')
-                .replace(/\s+/g, '-');
+            // FIXED: Use the companyName stored in this DocumentManager instance for filename prefix
+            // Ensure we're using the correct company name for THIS tab
+            const safeName = (this.companyName && this.companyName !== 'Company' ? this.companyName : 'Company')
+              .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+              .replace(/\s+/g, '-');
+
+            console.log('=== FILENAME DEBUG ===');
+            console.log('Document Manager Company Name:', this.companyName);
+            console.log('Safe Name for File:', safeName);
 
             // 2. Format date/time as MM.DD.YYYY-HH.MM.SS
             const now = new Date();
