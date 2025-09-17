@@ -1406,6 +1406,11 @@ class AutomationManager {
   // Per-tab company name management
   async setTabCompanyName(tabId, companyName) {
       this.tabCompanyNames.set(tabId, companyName || 'Company');
+      
+      // Also update the document manager for this tab
+      const manager = this.getTabDocumentManager(tabId);
+      manager.companyName = companyName || 'Company';
+      
       this.log(`Company name set for tab ${tabId}: ${companyName || 'Company'}`);
   }
 
@@ -1470,6 +1475,7 @@ class AutomationManager {
 class BackgroundDocumentManager {
     constructor() {
       this.tabId = null; // Track which tab this belongs to
+      this.companyName = 'Company';
       this.document = {
         title: 'Perplexity AI Automation Results',
         timestamp: null,
@@ -1594,7 +1600,8 @@ class BackgroundDocumentManager {
         return {
             document: this.document,
             responseCount: this.getResponseCount(),
-            hasResponses: this.hasResponses()
+            hasResponses: this.hasResponses(),
+            companyName: this.companyName // Include company name in response
         };
     }
 }

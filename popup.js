@@ -351,48 +351,39 @@ class PerplexityAutomator {
       });
       this.clearDocumentBtn.addEventListener('click', () => this.clearDocument());
 
-
-      // ✅ TEMPORARY: Add debug trigger (double-click company input field)
-      if (this.companyNameInput) {
-          this.companyNameInput.addEventListener('dblclick', () => {
-              this.debugCompanyName();
-          });
-      }
       // Automation controls
       this.startAutomationBtn.addEventListener('click', () => this.startAutomation());
       this.pauseAutomationBtn.addEventListener('click', () => this.pauseAutomation());
       this.resumeAutomationBtn.addEventListener('click', () => this.resumeAutomation());
       this.resetAutomationBtn.addEventListener('click', () => this.resetAutomation());
+      
+      // Company name change handler - ensure tab-specific updates
+      if (this.companyNameInput) {
+        this.companyNameInput.addEventListener('input', async () => {
+          const companyName = this.companyNameInput.value.trim();
+          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+          
+          // Update both document manager and background state for THIS specific tab
+          this.documentManager.companyName = companyName || 'Company';
+          this.documentManager.updateDocumentTitle();
+          
+          // Save to tab-specific background storage
+          await browser.runtime.sendMessage({
+            type: 'set-tab-company-name',
+            tabId: tab.id,
+            companyName: companyName || 'Company'
+          });
+          
+          // Update tab title in real-time
+          await this.updateTabTitle(companyName);
+        });
+      }
 
       // Notification settings
       if (this.enableNotifications) {
         this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
       }
 
-      // Persist company name on change
-      if (this.companyNameInput) {
-        this.companyNameInput.addEventListener('input', async () => {
-          // Get current tab and update title immediately
-          const companyName = this.companyNameInput.value.trim();
-
-          this.documentManager.companyName = companyName || 'Company';
-          this.documentManager.updateDocumentTitle();
-
-          // Update tab title in real-time
-          await this.updateTabTitle(companyName);
-
-          // Save only the companyName in UI state
-          this.saveUIState({
-            // Minimal state object; other fields will be merged internally
-            current: this.current || 0,
-            total: this.total || 0,
-            percentage: this.percentage || 0,
-            currentPromptText: this.currentPromptText || '',
-            responseCount: this.documentManager.getResponseCount(),
-            documentStatus: this.documentStatus ? this.documentStatus.textContent : 'Ready'
-          });
-        });
-      }
     }
 
     // ✅ ADD THIS DEBUG METHOD (for testing)
@@ -1212,6 +1203,23 @@ class DocumentManager {
             alert('No responses to download');
             return;
         }
+        
+        // CRITICAL FIX: Always get the current tab's company name before download
+        try {
+          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+          const tabData = await browser.runtime.sendMessage({ 
+            type: 'get-tab-document-data', 
+            tabId: tab.id 
+          });
+          
+          // Use the tab-specific company name if available
+          if (tabData && tabData.companyName && tabData.companyName !== 'Company') {
+            this.companyName = tabData.companyName;
+            this.updateDocumentTitle();
+          }
+        } catch (error) {
+          console.error('Failed to get current tab company name:', error);
+        }
 
         try {
             // Check if html-docx library is available
@@ -1498,6 +1506,22 @@ class DocumentManager {
         if (!this.hasResponses()) {
             alert('No responses to download');
             return;
+        }
+        
+        // CRITICAL FIX: Always get the current tab's company name before download
+        try {
+          const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+          const tabData = await browser.runtime.sendMessage({ 
+            type: 'get-tab-document-data', 
+            tabId: tab.id 
+          });
+          
+          // Use the tab-specific company name if available
+          if (tabData && tabData.companyName && tabData.companyName !== 'Company') {
+            this.companyName = tabData.companyName;
+          }
+        } catch (error) {
+          console.error('Failed to get current tab company name:', error);
         }
 
         try {
