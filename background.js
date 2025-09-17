@@ -286,6 +286,12 @@ class AutomationManager {
             await this.cleanupAfterDownload(message.automationId);
             sendResponse({ success: true });
             break;
+        case 'get-tab-company-name':
+          // Return per-tab company name
+          const requestedTab = message.tabId || sender.tab?.id;
+          const tabName = this.tabCompanyNames.get(requestedTab) || 'Company';
+          sendResponse({ companyName: tabName });
+          break;
         default:
           this.logError('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -1642,7 +1648,7 @@ class BackgroundDocumentManager {
             document: this.document,
             responseCount: this.getResponseCount(),
             hasResponses: this.hasResponses(),
-            companyName: this.companyName // Include company name in response
+            // companyName is retrieved by popup via new API
         };
     }
 }

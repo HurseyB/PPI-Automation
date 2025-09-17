@@ -322,24 +322,23 @@ class PerplexityAutomator {
       this.downloadDocxBtn.addEventListener('click', async () => {
           console.log('=== DOWNLOAD DEBUG START ===');
 
-          // Get tab and background data (existing logic)
+           // Get tab and request stored company name
           const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-          const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
 
-          // Company name resolution (existing logic preserved)
-          const uiState = await browser.storage.local.get('popupUIState');
-          const uiCompanyName = uiState.popupUIState?.companyName;
-          const storedName = tabData?.companyName;
-          const inputName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+          // NEW: Get the stored company name for this specific tab
+          const { companyName } = await browser.runtime.sendMessage({
+              type: 'get-tab-company-name',
+              tabId: tab.id
+          });
 
-          let finalName = 'Company';
-          if (uiCompanyName && uiCompanyName !== 'Company') {
-              finalName = uiCompanyName;
+          let finalName = companyName || 'Company';
+          /*  REMOVED - old logic that caused cross-tab contamination
           } else if (storedName && storedName !== 'Company') {
               finalName = storedName;
           } else if (inputName && inputName !== 'Company') {
               finalName = inputName;
           }
+          */
 
           this.documentManager.companyName = finalName;
           this.documentManager.updateDocumentTitle();
