@@ -46,14 +46,16 @@ class PerplexityAutomator {
             // Try to sync with background if no data locally
             if (!this.documentManager.hasResponses()) {
               // Sync only for current active tab
-              const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+              const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+              if (tabs.length === 0) return;
+              const tab = tabs[0];
               // Ensure document manager has the correct tab ID
               this.documentManager.setTabId(tab.id);
               const response = await browser.runtime.sendMessage({
                 type: 'get-tab-document-data',
                 tabId: tab.id
               });
-              if (response && response.document && response.document.responses.length > 0) {
+              if (response && response.document && response.document.responses && response.document.responses.length > 0) {
                 this.documentManager.document = {
                   ...response.document,
                   responses: response.document.responses.map(bg => ({
@@ -65,12 +67,13 @@ class PerplexityAutomator {
                 };
                 this.documentManager.companyName = response.companyName || this.documentManager.companyName;
                 this.documentManager.updateDocumentTitle();
-                this.documentManager.saveDocumentState();
+                await this.documentManager.saveDocumentState();
 
-                // ✅ ADD: Also update the input field if we have a stored company name
+                // Update the input field if we have a stored company name
                 if (response.companyName && response.companyName !== 'Company' && this.companyNameInput) {
                     this.companyNameInput.value = response.companyName;
                     console.log('Restored company name from background:', response.companyName);
+                    await this.updateTabTitle(response.companyName);
                 }
               }
             }
@@ -92,16 +95,21 @@ class PerplexityAutomator {
 
             // Retrieve tab-specific company name from background or UI state
             const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-            const tabData = await browser.runtime.sendMessage({ type: 'get-tab-document-data', tabId: tab.id });
+            const tabData = await browser.runtime.sendMessage({ 
+              type: 'get-tab-document-data', 
+              tabId: tab.id 
+            });
+            
             let name = '';
             if (tabData && tabData.companyName) {
                 name = tabData.companyName;
-            } else if (state.companyName !== undefined && this.companyNameInput) {
+            } else if (state.companyName && state.companyName !== 'Company') {
                 name = state.companyName;
             }
             if (name) {
                 this.companyNameInput.value = name;
                 this.documentManager.companyName = name;
+                this.documentManager.updateDocumentTitle();
                 // Update tab title when loading existing company name
                 await this.updateTabTitle(name);
             }
@@ -688,10 +696,14 @@ class PerplexityAutomator {
             // Clear background document as well
             try {
                 const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+
+                // Clear tab-specific background document
                 await browser.runtime.sendMessage({
                   type: 'clear-tab-document',
                   tabId: tab.id
                 });
+                // Clear tab-specific popup document storage
+                await browser.storage.local.remove([`popupDocument_tab_${tab.id}`]);
             } catch (error) {
                 console.error('Failed to clear background document:', error);
             }
@@ -838,14 +850,30 @@ class PerplexityAutomator {
         try {
             const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
             
+            // Ensure we're working with the correct tab
+            if (!tab || !tab.url.includes('perplexity.ai')) {
+              this.showNotification('Please navigate to Perplexity.ai first', 'error');
+              return;
+            }
+            
             if (!tab.url.includes('perplexity.ai')) {
                 this.showNotification('Please navigate to Perplexity.ai first', 'error');
                 return;
             }
 
             const companyName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+
+            // CRITICAL: Set company name BEFORE starting automation
             this.documentManager.companyName = companyName || 'Company';
             this.documentManager.updateDocumentTitle(); // ← ADD THIS LINE
+            
+            // Store company name for this specific tab
+            await browser.runtime.sendMessage({
+              type: 'set-tab-company-name',
+              tabId: tab.id,
+              companyName: companyName || 'Company'
+            });
+
             // Update tab title when starting automation
             if (companyName) {
               await this.updateTabTitle(companyName);
@@ -1036,7 +1064,7 @@ class DocumentManager {
 
     // NEW: Get tab-specific storage key
     getStorageKey() {
-      return this.tabId ? `popupDocument_tab_${this.tabId}` : 'popupDocument';
+      return this.tabId ? `popupDocument_tab_${this.tabId}` : `popupDocument_fallback_${Date.now()}`;
     }
 
     async loadDocumentState() {
@@ -1063,13 +1091,18 @@ class DocumentManager {
 
     async syncWithBackground() {
         try {
-            // NEW: Pass current tab ID to get tab-specific document data
+            // Get current tab ID to sync tab-specific document data
             const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+            if (!tab) return false;
+
+            // Ensure this document manager is tracking the correct tab
+            this.setTabId(tab.id);
+
             const response = await browser.runtime.sendMessage({
-              type: 'get-document-data',
+              type: 'get-tab-document-data',
               tabId: tab.id
             });
-            if (response && response.document && response.document.responses.length > 0) {
+            if (response && response.document && response.document.responses && response.document.responses.length > 0) {
                 // Map background document structure to popup structure
                 this.document = {
                     ...this.document,
@@ -1080,6 +1113,14 @@ class DocumentManager {
                         timestamp: bgResponse.timestamp
                     }))
                 };
+                
+                // CRITICAL: Also sync company name
+                if (response.companyName && response.companyName !== 'Company') {
+                  this.companyName = response.companyName;
+                  this.updateDocumentTitle();
+                }
+                
+                
                 await this.saveDocumentState();
                 console.log('Synced with background:', this.getResponseCount(), 'responses');
                 return true;
@@ -1237,6 +1278,7 @@ class DocumentManager {
 
     updateDocumentTitle() {
         this.document.title = `Business Analyses for ${this.companyName}`;
+        console.log('Document title updated:', this.document.title);
         this.saveDocumentState();
     }
 

@@ -2,6 +2,13 @@
  * Enhanced Perplexity AI Automator - Background Script
  * Fixed: Increased timeouts and proper sequencing
  */
+const tabCompanyMap = {};
+
+// === Added: Cleanup when tabs are closed ===
+browser.tabs.onRemoved.addListener((tabId) => {
+  delete tabCompanyMap[tabId];
+});
+
 
 class AutomationManager {
     constructor() {
@@ -63,6 +70,15 @@ class AutomationManager {
         browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             this.handleMessage(message, sender, sendResponse);
             return true;
+        });
+
+        // === Added: Save company name per tab ===
+        browser.runtime.onMessage.addListener((message, sender) => {
+          if (message.type === 'SAVE_COMPANY_NAME' && sender.tab && sender.tab.id != null) {
+            tabCompanyMap[sender.tab.id] = message.companyName;
+            // Optionally acknowledge receipt:
+            return Promise.resolve({ status: 'OK' });
+          }
         });
     }
 
@@ -426,6 +442,13 @@ class AutomationManager {
 
     // // Clear tab-specific timeout
     this.clearCurrentTimeout(tabId);
+    
+    // NEW: Clear all tab-specific storage when stopping automation
+    try {
+      await this.clearTabSpecificStorage(tabId);
+    } catch (error) {
+      this.logError('Failed to clear tab storage:', error);
+    }
 
     // Notify content script to stop
       try {
@@ -1411,10 +1434,32 @@ class AutomationManager {
   cleanupTabState(tabId) {
     this.clearTabTimeout(tabId);
     this.tabAutomations.delete(tabId);
+    // NEW: Clear tab-specific storage when tab is removed
+    this.clearTabSpecificStorage(tabId).catch(error => {
+      this.logError('Failed to clear tab storage on cleanup:', error);
+    });
     this.tabDocumentManagers.delete(tabId);
     this.tabCompanyNames.delete(tabId);
     this.tabTimeouts.delete(tabId);
     this.log(`Cleaned up state for tab ${tabId}`);
+  }
+  
+  // NEW: Clear all tab-specific storage
+  async clearTabSpecificStorage(tabId) {
+    try {
+      const keysToRemove = [
+        `backgroundDocument_tab_${tabId}`,
+        `popupDocument_tab_${tabId}`,
+        `tabState_${tabId}`,
+        `companyName_tab_${tabId}`
+      ];
+      
+      // Remove all tab-specific keys
+      await browser.storage.local.remove(keysToRemove);
+      this.log(`Cleared storage for tab ${tabId}`);
+    } catch (error) {
+      this.logError('Failed to clear tab storage:', error);
+    }
   }
 }
 
@@ -1439,7 +1484,7 @@ class BackgroundDocumentManager {
 
     // NEW: Get tab-specific storage key
     getStorageKey() {
-      return this.tabId ? `backgroundDocument_tab_${this.tabId}` : 'backgroundDocument';
+      return this.tabId ? `backgroundDocument_tab_${this.tabId}` : `backgroundDocument_fallback_${Date.now()}`;
     }
 
     async loadDocumentState() {

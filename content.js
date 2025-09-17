@@ -442,8 +442,13 @@ class PerplexityAutomator {
   // Update tab title with company name
   updateTabTitle(companyName) {
       try {
-          const title = companyName && companyName.trim()
-              ? `${companyName.trim()} Analyses`
+          // NEW: Only update if we have a meaningful company name
+          const cleanName = companyName && companyName.trim() && companyName.trim() !== 'Company' 
+            ? companyName.trim() 
+            : null;
+            
+          const title = cleanName
+            ? `${cleanName} Analyses`
               : 'Perplexity AI';
           document.title = title;
           console.log('Tab title updated to:', title);
