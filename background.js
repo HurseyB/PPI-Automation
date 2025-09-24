@@ -17,12 +17,12 @@ class AutomationManager {
         this.completedPrompts = new Set();
         this.settings = {
             delay: 5000, // Increased delay between prompts
-            maxRetries: 3,
-            timeout: 120000, // Increased to 2 minutes
-            retryDelay: 10000, // Increased retry delay
+            maxRetries: 0,
+            timeout: 60000, // Increased to 2 minutes
+            retryDelay: 60000, // Increased retry delay
             responseTimeout: 90000, // Increased response timeout
-            enableRetries: true,
-            pauseOnError: false
+            enableRetries: false,
+            pauseOnError: true
         };
         this.tabAutomations = new Map(); // tabId -> automation state
         this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
@@ -716,79 +716,22 @@ class AutomationManager {
       currentRetries < this.settings.maxRetries &&
       this.isRetryableError(error);
 
-    if (shouldRetry) {
-      // Increment retry count for this prompt
-      tabState.retryAttempts.set(actualIndex, currentRetries + 1);
-      this.log(`Retrying prompt ${promptNumber} (attempt ${currentRetries + 1}/${this.settings.maxRetries})`);
+    // For timeout errors, don't fail - just keep waiting
+    if (error.toLowerCase().includes('timeout')) {
+      this.log(`Prompt ${promptNumber} timed out, will continue waiting...`);
 
-      // Update progress with retry status
-      await this.sendMessageToPopup('automation-progress', {
-        current: promptNumber,
-        total: tabState.prompts.length,
-        prompt: tabState.prompts[actualIndex],
-        status: 'retrying',
-        retryCount: currentRetries + 1,
-        maxRetries: this.settings.maxRetries,
-        error: error
-      });
+      // Don't mark as failed, don't increment index, just wait
+      this.setTabTimeout(tabId, () => {
+        if (tabState.isRunning && !tabState.isPaused) {
+          this.processNextPrompt(tabId); // Continue waiting for same prompt
+        }
+      }, this.settings.retryDelay);
 
-      // Wait longer before retry (don't increment currentPromptIndex)
-        this.setTabTimeout(tabId, () => {
-          if (tabState.isRunning && !tabState.isPaused) {
-            this.processNextPrompt(tabId); // Retry same prompt
-          }
-        }, this.settings.retryDelay);
-
-    } else {
-      // Mark this prompt as completed (failed)
-      tabState.completedPrompts.add(actualIndex);
-      
-      // Save failed result
-      const failedResult = {
-        index: actualIndex,
-        promptNumber: promptNumber,
-        prompt: tabState.prompts[actualIndex],
-        response: '',
-        timestamp: Date.now(),
-        success: false,
-        error: error,
-        retryCount: currentRetries,
-        automationId: tabState.automationId
-      };
-
-      tabState.processedResults.push(failedResult);
-      await this.savePromptResult(tabId, actualIndex, failedResult);
-
-      // Update progress with failure
-      await this.sendMessageToPopup('automation-progress', {
-        current: tabState.processedResults.length,
-        total: tabState.prompts.length,
-        prompt: tabState.prompts[actualIndex],
-        status: 'failed',
-        error: error,
-        retryCount: currentRetries
-      });
-
-      if (this.settings.pauseOnError) {
-        await this.pauseAutomation(tabId);
-        await this.sendMessageToPopup('automation-error', {
-          error: `Prompt ${promptNumber} failed: ${error}`,
-          promptIndex: actualIndex,
-          paused: true
-        });
-      } else {
-        // Skip to next prompt
-        this.updateTabState(tabId, { currentPromptIndex: tabState.currentPromptIndex + 1 });
-        tabState.retryAttempts.delete(actualIndex);
-        await this.saveAutomationState();
-        
-        this.setTabTimeout(tabId, () => {
-          if (tabState.isRunning && !tabState.isPaused) {
-            this.processNextPrompt(tabId);
-          }
-        }, this.settings.delay);
-      }
+      return; // Don't process as failure
     }
+
+    // For other errors, mark as failed and move on
+    tabState.completedPrompts.add(actualIndex);
   }
 
   async handlePromptTimeout(tabId) {
@@ -797,8 +740,23 @@ class AutomationManager {
       this.logError(`No tab state found for tab ${tabId} during timeout`);
       return;
     }
-    this.logError(`Prompt ${tabState.currentPromptIndex + 1} timed out`);
-    await this.handlePromptFailed('Timeout - prompt execution exceeded time limit', tabState.currentPromptIndex, tabId);
+
+    // Instead of failing, wait another 60 seconds
+    this.log(`Prompt ${tabState.currentPromptIndex + 1} still waiting after 60s, checking again in 60s...`);
+
+    // Set another 60-second timeout to keep waiting
+    this.setTabTimeout(tabId, () => {
+      this.handlePromptTimeout(tabId);
+    }, this.settings.retryDelay);
+
+    // Update progress to show extended wait
+    await this.sendMessageToPopup('automation-progress', {
+      current: tabState.currentPromptIndex + 1,
+      total: tabState.prompts.length,
+      prompt: tabState.prompts[tabState.currentPromptIndex].text,
+      status: 'waiting',
+      message: 'Still waiting for AI response...'
+    });
   }
 
   isRetryableError(error) {

@@ -1022,7 +1022,7 @@ class DocumentManager {
         this.companyName = 'Company';
         this.tabId = null; // Track which tab this belongs to
         this.document = {
-            title: `Business Analyses for ${this.companyName}`,
+            title: `Business Analyses for Company`,
             timestamp: null,
             responses: [],
             summary: null
@@ -1153,7 +1153,7 @@ class DocumentManager {
 
     clearDocument() {
         this.document = {
-            title: `Business Analyses for ${this.companyName}`,
+            title: `Business Analyses for Company`,
             timestamp: null,
             responses: [],
             summary: null
@@ -1195,8 +1195,6 @@ class DocumentManager {
 
             // Use the companyName stored in this DocumentManager instance for filename prefix
             const safeName = (this.companyName || 'Company')
-                .replace(/[<>:"\/\\|?*\x00-\x1F]/g, '')
-                .replace(/\s+/g, '-');
 
             // 2. Format date/time as MM.DD.YYYY-HH.MM.SS
             const now = new Date();
@@ -1205,7 +1203,7 @@ class DocumentManager {
             const timePart = `${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}`;
 
             // 3. Build filename
-            const filename = `${safeName}-${datePart}-${timePart}.docx`;
+            const filename = `Company-${datePart}-${timePart}.docx`;
 
             const url = URL.createObjectURL(docxBlob);
             const a = document.createElement('a');
@@ -1236,7 +1234,7 @@ class DocumentManager {
     }
 
     updateDocumentTitle() {
-        this.document.title = `Business Analyses for ${this.companyName}`;
+        this.document.title = `Business Analyses for Company`;
         this.saveDocumentState();
     }
 
@@ -1696,7 +1694,7 @@ class DocumentManager {
 
             const url = URL.createObjectURL(blob);
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const filename = `perplexity-automation-${timestamp}.docx`;
+            const filename = `Company-${datePart}-${timePart}.docx`;
 
             const a = document.createElement('a');
             a.href = url;
