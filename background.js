@@ -128,7 +128,7 @@ class AutomationManager {
           await this.resumeAutomation(resumeTabId);
           sendResponse({ success: true });
           break;
-        case 'get-automation-status':
+        case 'get-automation-status': {
           // NEW: Get tab-specific status if tabId provided
           const statusTabId = message.tabId || this.currentTabId;
           const tabState = statusTabId ? this.getTabState(statusTabId) : null;
@@ -157,6 +157,7 @@ class AutomationManager {
             });
           }
           break;
+        }
         case 'get-results':
           sendResponse({
             results: this.processedResults,
@@ -183,11 +184,25 @@ class AutomationManager {
           await this.handlePromptCompleted(message.result, sender.tab.id);
           sendResponse({ success: true });
           break;
-        case 'prompt-failed':
-          // Pass the sender.tab.id here as well
-          await this.handlePromptFailed(message.error, message.promptIndex, sender.tab.id);
+        case 'prompt-failed': {
+          // IGNORE all prompt-failed messages - prompts should never fail, only wait
+          const tabState = this.getTabState(sender.tab.id);
+          if (tabState) {
+            const promptNumber = (message.promptIndex || tabState.currentPromptIndex) + 1;
+            this.log(`Ignoring prompt-failed message for prompt ${promptNumber} - continuing to wait for response`);
+
+            // Update progress to show we're still waiting
+            await this.sendMessageToPopup('automation-progress', {
+              current: promptNumber,
+              total: tabState.prompts.length,
+              prompt: tabState.prompts[message.promptIndex || tabState.currentPromptIndex].text,
+              status: 'waiting-extended',
+              message: 'AI is taking longer than usual, continuing to wait...'
+            });
+          }
           sendResponse({ success: true });
           break;
+        }
         case 'update-settings':
           await this.updateSettings(message.settings);
           sendResponse({ success: true });
@@ -548,19 +563,20 @@ class AutomationManager {
       }
 
     // Send prompt to content script with increased timeouts
+    // Send prompt to content script with infinite timeout mode
     await browser.tabs.sendMessage(tabId, {
       type: 'execute-prompt',
       prompt: currentPrompt.text,
       index: tabState.currentPromptIndex,
       timeout: this.settings.timeout,
       responseTimeout: this.settings.responseTimeout,
-      automationId: tabState.automationId
+      automationId: tabState.automationId,
+      infiniteWait: true, // NEW: Tell content script to never timeout
+      maxWaitTime: 0 // NEW: 0 = infinite wait
     });
 
-      // Set tab-specific timeout for prompt execution
-      this.setTabTimeout(tabId, () => {
-        this.handlePromptTimeout(tabId);
-      }, this.settings.timeout);
+      // Also store the start time for this prompt
+      tabState.promptStartTime = Date.now();
 
 
     } catch (error) {
@@ -603,6 +619,10 @@ class AutomationManager {
     tabState.processingCompletions.add(idx);
 
     this.log(`Prompt ${promptNumber} completed successfully`);
+
+    // Ensure we clear any extended timeout cycles
+    this.clearTabTimeout(tabId);
+    this.log(`Prompt ${promptNumber} completed, clearing any extended waits`);
 
     // Clear tab-specific timeout and processing flag
     this.clearTabTimeout(tabId);
@@ -692,71 +712,82 @@ class AutomationManager {
       return;
     }
 
-    // Use the correct prompt index - either passed or current for this tab
     const actualIndex = promptIndex !== undefined ? promptIndex : tabState.currentPromptIndex;
     const promptNumber = actualIndex + 1;
-    
+
     // Check if we've already processed this failure to prevent duplicates
     if (tabState.completedPrompts.has(actualIndex) ||
       (tabState.processingCompletions && tabState.processingCompletions.has(actualIndex))) {
         this.log(`Prompt ${promptNumber} failure already processed, ignoring duplicate`);
         return;
     }
-    
-    this.logError(`Prompt ${promptNumber} failed:`, error);
-    
-    // Clear tab-specific timeout and processing flag
-    this.clearTabTimeout(tabId);
 
-    this.updateTabState(tabId, { isProcessingPrompt: false });
-
-    // Get current retry count for this specific prompt
-    const currentRetries = tabState.retryAttempts.get(actualIndex) || 0;
-    const shouldRetry = this.settings.enableRetries &&
-      currentRetries < this.settings.maxRetries &&
-      this.isRetryableError(error);
-
-    // For timeout errors, don't fail - just keep waiting
-    if (error.toLowerCase().includes('timeout')) {
-      this.log(`Prompt ${promptNumber} timed out, will continue waiting...`);
-
-      // Don't mark as failed, don't increment index, just wait
-      this.setTabTimeout(tabId, () => {
-        if (tabState.isRunning && !tabState.isPaused) {
-          this.processNextPrompt(tabId); // Continue waiting for same prompt
-        }
-      }, this.settings.retryDelay);
-
-      return; // Don't process as failure
-    }
-
-    // For other errors, mark as failed and move on
-    tabState.completedPrompts.add(actualIndex);
-  }
-
-  async handlePromptTimeout(tabId) {
-    const tabState = this.getTabState(tabId);
-    if (!tabState) {
-      this.logError(`No tab state found for tab ${tabId} during timeout`);
-      return;
-    }
-
-    // Instead of failing, wait another 60 seconds
-    this.log(`Prompt ${tabState.currentPromptIndex + 1} still waiting after 60s, checking again in 60s...`);
-
-    // Set another 60-second timeout to keep waiting
-    this.setTabTimeout(tabId, () => {
-      this.handlePromptTimeout(tabId);
-    }, this.settings.retryDelay);
+    // NEVER fail prompts - all "failures" are just extended waits
+    this.log(`Prompt ${promptNumber} timeout detected, continuing to wait for response...`);
 
     // Update progress to show extended wait
     await this.sendMessageToPopup('automation-progress', {
-      current: tabState.currentPromptIndex + 1,
+      current: promptNumber,
       total: tabState.prompts.length,
-      prompt: tabState.prompts[tabState.currentPromptIndex].text,
-      status: 'waiting',
-      message: 'Still waiting for AI response...'
+      prompt: tabState.prompts[actualIndex].text,
+      status: 'waiting-extended',
+      message: 'AI is taking longer than usual, continuing to wait...'
     });
+
+    // Reset processing flag so the system can continue monitoring
+    this.updateTabState(tabId, { isProcessingPrompt: false });
+
+    // Don't mark as completed or failed - just wait for eventual completion
+    // The content script should continue monitoring for the response
+
+    // Set a recovery timer in case the prompt gets truly stuck
+    this.setTabTimeout(tabId, () => {
+      this.handleStuckPrompt(tabId);
+    }, 300000); // 5 minutes before attempting recovery
+  }
+
+  // NEW METHOD: Handle stuck prompts that need to be restarted
+  async handleStuckPrompt(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState || !tabState.isRunning) {
+      return;
+    }
+
+    const currentIndex = tabState.currentPromptIndex;
+    const promptNumber = currentIndex + 1;
+
+    // Check if this prompt is truly stuck (not processing and not completed)
+    if (!tabState.isProcessingPrompt && !tabState.completedPrompts.has(currentIndex)) {
+      this.log(`Restarting stuck prompt ${promptNumber}`);
+
+      // Reset state and restart the prompt
+      this.updateTabState(tabId, { isProcessingPrompt: false });
+
+      // Restart the prompt execution
+      await this.processNextPrompt(tabId);
+    }
+  }
+
+  // NEW METHOD: Handle truly extended timeouts
+  async handleExtendedTimeout(tabId) {
+    const tabState = this.getTabState(tabId);
+    if (!tabState) return;
+
+    const currentPromptIndex = tabState.currentPromptIndex;
+
+    // Final check if prompt completed during the 10-minute wait
+    if (tabState.completedPrompts.has(currentPromptIndex)) {
+      this.log(`Prompt ${currentPromptIndex + 1} completed during 10-minute wait`);
+      return;
+    }
+
+    // After 10+ minutes, log but continue waiting (no failure, just logging)
+    this.log(`Prompt ${currentPromptIndex + 1} has been waiting for 10+ minutes, continuing to wait...`);
+
+    // Set another 10-minute timeout
+    this.setTabTimeout(tabId, () => {
+      this.handleExtendedTimeout(tabId);
+    }, 600000);
   }
 
   isRetryableError(error) {
