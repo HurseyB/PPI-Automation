@@ -49,6 +49,11 @@ class PromptManager {
         this.exportSelected = document.getElementById('exportSelected');
         this.includeMetadata = document.getElementById('includeMetadata');
 
+        // Notification settings elements
+        this.phoneNumberInput = document.getElementById('phoneNumberInput');
+        this.savePhoneBtn = document.getElementById('savePhoneBtn');
+        this.testEmailBtn = document.getElementById('testEmailBtn');
+
         // Custom Modal Edit
         this.editModal = document.getElementById('editModal');
         this.editModalClose = document.getElementById('editModalClose');
@@ -108,6 +113,20 @@ class PromptManager {
         // Clear log button
         this.clearLogBtn.addEventListener('click', () => this.clearLog());
 
+        // Phone number settings
+        if (this.savePhoneBtn) {
+            this.savePhoneBtn.addEventListener('click', () => this.savePhoneNumber());
+        }
+        if (this.testEmailBtn) {
+            this.testEmailBtn.addEventListener('click', () => this.testEmail());
+        }
+        if (this.phoneNumberInput) {
+            // Format phone number input (only allow digits)
+            this.phoneNumberInput.addEventListener('input', (e) => {
+                e.target.value = e.target.value.replace(/[^0-9]/g, '');
+            });
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
 
@@ -150,6 +169,7 @@ class PromptManager {
         const prompt = {
           id: Date.now(),
           text: text,
+          nickname: `Prompt ${this.prompts.length + 1}`, // Auto-generated nickname
           created: new Date().toISOString(),
           modified: new Date().toISOString(),
           pauseAfter: false
@@ -452,12 +472,14 @@ class PromptManager {
 
             // Add imported prompts
             const importedCount = validPrompts.length;
-            validPrompts.forEach(promptData => {
+            validPrompts.forEach((promptData, index) => {
                 const prompt = {
                     id: Date.now() + Math.random(),
                     text: promptData.text.trim(),
+                    nickname: promptData.nickname || `Prompt ${this.prompts.length + index + 1}`,
                     created: promptData.created || new Date().toISOString(),
-                    modified: new Date().toISOString()
+                    modified: new Date().toISOString(),
+                    pauseAfter: promptData.pauseAfter || false
                 };
                 this.prompts.push(prompt);
             });
@@ -484,7 +506,11 @@ class PromptManager {
         }
 
         const exportData = promptsToExport.map(prompt => {
-            const data = { text: prompt.text };
+            const data = {
+                text: prompt.text,
+                nickname: prompt.nickname,
+                pauseAfter: prompt.pauseAfter
+            };
             if (includeMetadata) {
                 data.created = prompt.created;
                 data.modified = prompt.modified;
@@ -537,6 +563,7 @@ class PromptManager {
             this.prompts = storedPrompts.map((p, index) => ({
               id: p.id || Date.now() + index,
               text: p.text,
+              nickname: p.nickname || `Prompt ${index + 1}`, // Auto-generate nickname if missing
               created: p.created || new Date().toISOString(),
               modified: p.modified || new Date().toISOString(),
               pauseAfter: p.pauseAfter || false
@@ -546,6 +573,76 @@ class PromptManager {
         } catch (error) {
             console.error('Failed to load prompts:', error);
             this.showNotification('Failed to load prompts', 'error');
+        }
+
+        // Load phone number after prompts
+        this.loadPhoneNumber();
+    }
+
+    // Phone Number Management
+    async loadPhoneNumber() {
+        try {
+            const result = await browser.storage.local.get(['phoneNumber']);
+            if (result.phoneNumber && this.phoneNumberInput) {
+                this.phoneNumberInput.value = result.phoneNumber;
+            }
+        } catch (error) {
+            console.error('Failed to load phone number:', error);
+        }
+    }
+
+    async savePhoneNumber() {
+        try {
+            const phoneNumber = this.phoneNumberInput.value.trim();
+
+            // Validate phone number (10 digits)
+            if (!/^\d{10}$/.test(phoneNumber)) {
+                this.showNotification('Please enter a valid 10-digit phone number', 'error');
+                return;
+            }
+
+            await browser.storage.local.set({ phoneNumber: phoneNumber });
+            this.showNotification('Phone number saved successfully!', 'success');
+
+            console.log('Phone number saved:', phoneNumber);
+        } catch (error) {
+            console.error('Failed to save phone number:', error);
+            this.showNotification('Failed to save phone number', 'error');
+        }
+    }
+
+    async testEmail() {
+        try {
+            const phoneNumber = this.phoneNumberInput.value.trim();
+
+            if (!/^\d{10}$/.test(phoneNumber)) {
+                this.showNotification('Please enter and save a valid 10-digit phone number first', 'error');
+                return;
+            }
+
+            this.testEmailBtn.disabled = true;
+            this.testEmailBtn.textContent = 'Sending...';
+
+            // Send test SMS via background script using EmailJS
+            const response = await browser.runtime.sendMessage({
+                type: 'send-email',
+                emailData: {
+                    to: `${phoneNumber}@vtext.com`,
+                    companyName: 'Test Company'
+                }
+            });
+
+            if (response.success) {
+                this.showNotification('Test email sent successfully!', 'success');
+            } else {
+                throw new Error(response.error || 'Email service returned error');
+            }
+        } catch (error) {
+            console.error('Failed to send test email:', error);
+            this.showNotification('Failed to send test email', 'error');
+        } finally {
+            this.testEmailBtn.disabled = false;
+            this.testEmailBtn.innerHTML = '<span class="btn-icon">📧</span> Test Email';
         }
     }
 
@@ -576,7 +673,7 @@ class PromptManager {
 
         `;
 
-        // Header: drag-handle, number, preview
+        // Header: drag-handle, number, nickname, preview
         const header = document.createElement('div');
         header.className = 'prompt-header';
         header.innerHTML = `
@@ -584,12 +681,15 @@ class PromptManager {
           <input type="checkbox" class="prompt-checkbox" data-index="${index}">
           <span class="drag-handle">⋮⋮</span>
           <span class="prompt-number">${index + 1}.</span>
+          <div class="prompt-nickname-container">
+            <input type="text" class="prompt-nickname-input" value="${promptObj.nickname}" data-index="${index}" placeholder="Enter nickname...">
+          </div>
           <span class="prompt-preview">${promptObj.text}</span>
           <div class="prompt-actions">
             <button class="btn btn-text btn-edit" title="Edit prompt">✏️</button>
             <button class="btn btn-text btn-delete" title="Delete prompt">🗑️</button>
             <label class="setting-label">
-              <input type="checkbox" class="pause-after-checkbox" data-index="${index}" ${prompt.pauseAfter ? 'checked' : ''}>
+              <input type="checkbox" class="pause-after-checkbox" data-index="${index}" ${promptObj.pauseAfter ? 'checked' : ''}>
               <span>Pause After</span>
             </label>
           </div>`;
@@ -623,6 +723,23 @@ class PromptManager {
           this.prompts[index].pauseAfter = checkbox.checked;
           this.prompts[index].modified = new Date().toISOString();
           this.savePrompts();
+        });
+
+        // Bind nickname editing
+        const nicknameInput = item.querySelector('.prompt-nickname-input');
+        nicknameInput.addEventListener('blur', () => {
+          const newNickname = nicknameInput.value.trim();
+          if (newNickname && newNickname !== this.prompts[index].nickname) {
+            this.prompts[index].nickname = newNickname;
+            this.prompts[index].modified = new Date().toISOString();
+            this.savePrompts();
+            this.showNotification('Prompt nickname updated', 'success');
+          }
+        });
+        nicknameInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            nicknameInput.blur(); // Trigger save
+          }
         });
       });
     }

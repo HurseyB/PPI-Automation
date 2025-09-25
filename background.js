@@ -22,7 +22,8 @@ class AutomationManager {
             retryDelay: 60000, // Increased retry delay
             responseTimeout: 90000, // Increased response timeout
             enableRetries: false,
-            pauseOnError: true
+            pauseOnError: true,
+            multiTabStaggerDelay: 2000 // Additional delay between tabs to prevent conflicts
         };
         this.tabAutomations = new Map(); // tabId -> automation state
         this.tabDocumentManagers = new Map(); // tabId -> BackgroundDocumentManager
@@ -104,7 +105,7 @@ class AutomationManager {
       this.log('Received message:', message.type);
       switch (message.type) {
         case 'start-automation':
-          await this.startAutomation(message.prompts, message.tabId);
+          await this.startAutomation(message.prompts, message.tabId, message.companyName);
           // Show overlay when automation starts
           await this.updateStatusOverlay(message.tabId, 'progress', 'In Progress');
           sendResponse({ success: true });
@@ -272,10 +273,12 @@ class AutomationManager {
             const completeInfo = this.downloadTracking.get(message.automationId);
             if (completeInfo) {
                 completeInfo.status = 'downloaded';
-                this.log(`Download completed for automation ${message.automationId}, scheduling cleanup`);
+                this.log(`Download completed for automation ${message.automationId}, starting immediate cleanup`);
+
+                // Trigger immediate cleanup (reduced delay)
                 setTimeout(() => {
                     this.cleanupAfterDownload(message.automationId);
-                }, 5000); // 5 second delay
+                }, 2000); // 2 second delay to ensure download is fully complete
             }
             sendResponse({ success: true });
             break;
@@ -284,6 +287,14 @@ class AutomationManager {
             await this.cleanupAfterDownload(message.automationId);
             sendResponse({ success: true });
             break;
+        case 'send-email':
+            try {
+                await this.sendEmail(message.emailData);
+                sendResponse({ success: true });
+            } catch (error) {
+                sendResponse({ success: false, error: error.message });
+            }
+            break;
         default:
           this.logError('Unknown message type:', message.type);
           sendResponse({ success: false, error: 'Unknown message type' });
@@ -291,6 +302,109 @@ class AutomationManager {
     } catch (error) {
       this.logError('Error handling message:', error);
       sendResponse({ success: false, error: error.message });
+    }
+  }
+
+  // NEW: Send email via EmailJS
+  async sendEmail(emailData) {
+    try {
+      this.log('Sending email via EmailJS to:', emailData.to);
+
+      // Validate required email data for EmailJS template
+      if (!emailData.to || !emailData.companyName) {
+        throw new Error('Missing required email data (to, companyName)');
+      }
+
+      // EmailJS configuration - Update values in emailjs-config.js
+      const emailJSConfig = {
+        serviceId: 'service_id', // TODO: Replace in emailjs-config.js
+        templateId: 'template_id', // TODO: Replace in emailjs-config.js
+        publicKey: 'public_key' // TODO: Replace in emailjs-config.js
+      };
+
+      // Prepare template parameters for EmailJS (SMS-friendly format)
+      const templateParams = {
+        to_email: emailData.to,
+        company_name: emailData.companyName || 'Company',
+        from_name: 'Perplexity AI Automator'
+      };
+
+      // Send email via EmailJS API
+      const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          service_id: emailJSConfig.serviceId,
+          template_id: emailJSConfig.templateId,
+          user_id: emailJSConfig.publicKey,
+          template_params: templateParams
+        })
+      });
+
+      // Log response details for debugging
+      this.log(`EmailJS response status: ${response.status}`);
+
+      if (!response.ok) {
+        const responseText = await response.text().catch(() => 'Unknown error');
+        throw new Error(`EmailJS returned status ${response.status}: ${responseText}`);
+      }
+
+      this.log('Email sent successfully via EmailJS');
+      return { success: true };
+    } catch (error) {
+      this.logError('Failed to send email via EmailJS:', error);
+      throw error;
+    }
+  }
+
+  // NEW: Send completion notification email/SMS
+  async sendCompletionNotification(tabId, summary) {
+    try {
+      this.log('📧 Checking if completion email should be sent...');
+
+      // Check if notifications are enabled in storage
+      const settings = await browser.storage.local.get(['notificationSettings', 'phoneNumber']);
+      const notificationsEnabled = settings.notificationSettings?.enabled || false;
+
+      this.log('📧 Notifications enabled in storage:', notificationsEnabled);
+
+      if (!notificationsEnabled) {
+        this.log('📧 Email notifications disabled by user');
+        return;
+      }
+
+      // Get phone number from storage
+      if (!settings.phoneNumber) {
+        this.log('📧 No phone number configured for email notifications');
+        return;
+      }
+
+      // Get company name for this tab
+      const companyName = this.tabCompanyNames.get(tabId) || 'Company';
+
+      // Debug: Show all stored company names
+      this.log('📧 All stored company names:', Array.from(this.tabCompanyNames.entries()));
+      this.log('📧 Retrieved company name for tab', tabId, ':', companyName);
+
+      this.log('📧 Sending completion notification:', {
+        phoneNumber: settings.phoneNumber,
+        companyName: companyName,
+        tabId: tabId
+      });
+
+      // Send email via existing sendEmail method
+      await this.sendEmail({
+        to: `${settings.phoneNumber}@vtext.com`,
+        companyName: companyName
+      });
+
+      this.log('📧 Completion notification sent successfully');
+
+    } catch (error) {
+      this.logError('📧 Failed to send completion notification:', error);
+      // Don't throw - we don't want to break automation completion if email fails
     }
   }
 
@@ -323,14 +437,18 @@ class AutomationManager {
   // NEW: Update tab title via content script
   async updateTabTitle(tabId, companyName) {
     try {
+      // Store company name for this specific tab
+      this.tabCompanyNames.set(tabId, companyName || 'Company');
+
       await browser.tabs.sendMessage(tabId, {
         type: 'update-tab-title',
         companyName: companyName || ''
       });
-        this.log(`Tab ${tabId} title updated for company: ${companyName || 'Default'}`);
-      } catch (error) {
-        this.logError(`Failed to update tab ${tabId} title:`, error);
-      }
+
+      this.log(`Tab ${tabId} title updated and company name stored: ${companyName || 'Company'}`);
+    } catch (error) {
+      this.logError(`Failed to update tab ${tabId} title:`, error);
+    }
   }
 
   async startAutomation(prompts /* array of { text, pauseAfter } */, tabId, companyName = '') {
@@ -389,11 +507,27 @@ class AutomationManager {
           automationId: tabState.automationId
       });
 
-      // Start processing prompts
-      await this.processNextPrompt(tabId);
+      // Start processing prompts with staggered delay for multi-tab scenarios
+      const runningTabsCount = Array.from(this.tabAutomations.values())
+        .filter(state => state.isRunning).length;
 
-      // Show overlay status
-      await this.updateStatusOverlay(tabId, 'progress', 'In Progress');
+      const staggerDelay = runningTabsCount > 1 ?
+        this.settings.multiTabStaggerDelay * (runningTabsCount - 1) : 0;
+
+      if (staggerDelay > 0) {
+        this.log(`Staggering tab ${tabId} start by ${staggerDelay}ms (${runningTabsCount} tabs running)`);
+        await this.updateStatusOverlay(tabId, 'progress', 'Starting Soon...');
+        this.setTabTimeout(tabId, () => {
+          if (tabState.isRunning && !tabState.isPaused) {
+            this.processNextPrompt(tabId);
+            this.updateStatusOverlay(tabId, 'progress', 'In Progress');
+          }
+        }, staggerDelay);
+      } else {
+        await this.processNextPrompt(tabId);
+        // Show overlay status
+        await this.updateStatusOverlay(tabId, 'progress', 'In Progress');
+      }
   }
 
 
@@ -494,6 +628,60 @@ class AutomationManager {
       throw new Error(`Automation is not paused on tab ${tabId}`);
     }
 
+    // Check if there's a pending response to collect
+    if (tabState.pendingResponse) {
+      this.log(`Collecting pending response for prompt ${tabState.pendingResponse.index + 1}`);
+
+      // First, get the latest response from the page
+      try {
+        const latestResponse = await this.collectLatestResponse(tabId);
+        if (latestResponse && latestResponse.trim()) {
+          // Use the latest response from the page
+          tabState.pendingResponse.response = latestResponse;
+          tabState.pendingResponse.timestamp = Date.now();
+        }
+      } catch (error) {
+        this.log(`Could not collect latest response, using stored response: ${error.message}`);
+      }
+
+      // Add the response to the document manager
+      const documentManager = this.getTabDocumentManager(tabId);
+      documentManager.addResponse(
+        tabState.pendingResponse.index,
+        tabState.pendingResponse.prompt,
+        tabState.pendingResponse.response
+      );
+
+      // Create processed result for consistency
+      const processedResult = {
+        index: tabState.pendingResponse.index,
+        promptNumber: tabState.pendingResponse.index + 1,
+        prompt: tabState.pendingResponse.prompt,
+        response: tabState.pendingResponse.response,
+        timestamp: tabState.pendingResponse.timestamp,
+        success: true,
+        retryCount: 0,
+        processingTime: 0,
+        automationId: tabState.automationId
+      };
+      tabState.processedResults.push(processedResult);
+
+      // Advance index now that we've collected the response
+      this.updateTabState(tabId, {
+        currentPromptIndex: tabState.currentPromptIndex + 1,
+        pendingResponse: null // Clear the pending response
+      });
+
+      // Notify popup about document update
+      await this.sendMessageToPopup('document-updated', {
+        responseCount: documentManager.getResponseCount(),
+        status: 'collecting',
+        message: 'Response collected successfully'
+      });
+
+      this.log(`Response collected successfully for prompt ${tabState.pendingResponse.index + 1}`);
+    }
+
     this.updateTabState(tabId, { isPaused: false });
     this.log(`Automation resumed on tab ${tabId}`);
     await this.saveAutomationState();
@@ -503,12 +691,25 @@ class AutomationManager {
       tabId: tabId
     });
 
-    // Continue processing next prompt (index was already advanced)
+    // Continue processing next prompt
     if (!tabState.isProcessingPrompt) {
       await this.processNextPrompt(tabId);
     }
     // Update overlay status
     await this.updateStatusOverlay(tabId, 'progress', 'In Progress');
+  }
+
+  async collectLatestResponse(tabId) {
+    // Send message to content script to get the latest response from the page
+    try {
+      const response = await browser.tabs.sendMessage(tabId, {
+        type: 'collect-latest-response'
+      });
+      return response.responseText || '';
+    } catch (error) {
+      this.logError(`Failed to collect latest response from tab ${tabId}:`, error);
+      throw error;
+    }
   }
 
   async processNextPrompt(tabId) {
@@ -624,9 +825,8 @@ class AutomationManager {
     this.clearTabTimeout(tabId);
     this.log(`Prompt ${promptNumber} completed, clearing any extended waits`);
 
-    // Clear tab-specific timeout and processing flag
+    // Clear tab-specific timeout but KEEP isProcessingPrompt flag to prevent race conditions
     this.clearTabTimeout(tabId);
-    this.updateTabState(tabId, { isProcessingPrompt: false });
   try {
     // Process and store result using the idx
     const processedResult = {
@@ -656,7 +856,32 @@ class AutomationManager {
          hasResponse: !!result.response
     });
 
-    // NEW: Add response to background document manager BEFORE pauseAfter check
+    // **CHECK FOR PAUSE-AFTER BEFORE RESPONSE COLLECTION**
+    if (tabState.prompts[idx].pauseAfter) {
+      this.log(`Pause-after requested for prompt ${idx + 1}, storing pending response`);
+
+      // Store the response temporarily without adding to document
+      this.updateTabState(tabId, {
+        pendingResponse: {
+          index: idx,
+          prompt: tabState.prompts[idx],
+          response: result.response || '',
+          timestamp: result.timestamp || Date.now()
+        }
+      });
+
+      // Pause automation and show indicator
+      await this.pauseAutomation(tabId);
+      await this.updateStatusOverlay(tabId, 'pending-response', 'Response Ready - Click Resume to Collect');
+
+      // ✅ CLEANUP - Always remove from processing set
+      if (tabState.processingCompletions) {
+        tabState.processingCompletions.delete(idx);
+      }
+      return; // Exit early, don't collect response yet
+    }
+
+    // Normal flow: Add response to background document manager
     if (result.response && result.response.length > 0) {
       const documentManager = this.getTabDocumentManager(tabId);
       documentManager.addResponse(idx, tabState.prompts[idx], result.response);
@@ -669,7 +894,6 @@ class AutomationManager {
       });
     }
 
-
     // Advance index
     this.updateTabState(tabId, {
       currentPromptIndex: tabState.currentPromptIndex + 1
@@ -677,20 +901,23 @@ class AutomationManager {
     tabState.retryAttempts.delete(idx);
     await this.saveAutomationState();
 
-    // **Auto-pause after submission if flagged**
-    if (tabState.prompts[idx].pauseAfter) {
-      this.log(`Pausing after prompt ${idx + 1} as requested`);
-      await this.pauseAutomation(tabId);
-      return;  // stop before processing next
-    }
-
-    // Wait before next prompt or complete
+    // Wait before next prompt or complete with adaptive delay for multi-tab scenarios
     if (tabState.currentPromptIndex < tabState.prompts.length) {
+      const runningTabsCount = Array.from(this.tabAutomations.values())
+        .filter(state => state.isRunning && !state.isPaused).length;
+
+      // Increase delay when multiple tabs are running to reduce server load
+      const adaptiveDelay = runningTabsCount > 1 ?
+        this.settings.delay + (this.settings.multiTabStaggerDelay * (runningTabsCount - 1) / 2) :
+        this.settings.delay;
+
+      this.log(`Setting delay of ${adaptiveDelay}ms for next prompt on tab ${tabId} (${runningTabsCount} tabs active)`);
+
       this.setTabTimeout(tabId, () => {
         if (tabState.isRunning && !tabState.isPaused) {
           this.processNextPrompt(tabId);
         }
-      }, this.settings.delay);
+      }, adaptiveDelay);
     } else {
       await this.completeAutomation(tabId);
     }
@@ -698,10 +925,13 @@ class AutomationManager {
     this.logError(`Error processing completion for prompt ${promptNumber}:`, error);
     // Don't re-throw - we've already marked as completed to prevent retries
   } finally {
-      // ✅ CLEANUP - Always remove from processing set
+      // ✅ CLEANUP - Always remove from processing set and clear processing flag
       if (tabState.processingCompletions) {
         tabState.processingCompletions.delete(idx);
       }
+
+      // NOW it's safe to clear the processing flag - prevents race conditions
+      this.updateTabState(tabId, { isProcessingPrompt: false });
     }
   }
 
@@ -734,8 +964,8 @@ class AutomationManager {
       message: 'AI is taking longer than usual, continuing to wait...'
     });
 
-    // Reset processing flag so the system can continue monitoring
-    this.updateTabState(tabId, { isProcessingPrompt: false });
+    // DON'T reset processing flag here - let handlePromptCompleted do it properly
+    // This prevents race conditions where the next prompt starts before current one finishes
 
     // Don't mark as completed or failed - just wait for eventual completion
     // The content script should continue monitoring for the response
@@ -760,11 +990,12 @@ class AutomationManager {
     if (!tabState.isProcessingPrompt && !tabState.completedPrompts.has(currentIndex)) {
       this.log(`Restarting stuck prompt ${promptNumber}`);
 
-      // Reset state and restart the prompt
-      this.updateTabState(tabId, { isProcessingPrompt: false });
-
-      // Restart the prompt execution
+      // Restart the prompt execution (processNextPrompt will set isProcessingPrompt appropriately)
       await this.processNextPrompt(tabId);
+    } else if (tabState.isProcessingPrompt) {
+      this.log(`Prompt ${promptNumber} is still processing, not restarting`);
+    } else if (tabState.completedPrompts.has(currentIndex)) {
+      this.log(`Prompt ${promptNumber} already completed, not restarting`);
     }
   }
 
@@ -846,9 +1077,12 @@ class AutomationManager {
       automationId: tabState.automationId
     });
 
-    // ✅ Schedule automatic cleanup of this automation’s data after 5 minutes
+    // ✅ Schedule automatic cleanup of this automation's data after 5 minutes
     this.scheduleAutomationCleanup(tabId, tabState.automationId);
     await this.showCompletionNotification(summary);
+
+    // 📧 Send completion email/SMS notification
+    await this.sendCompletionNotification(tabId, summary);
 
     // Update overlay status
     await this.updateStatusOverlay(tabId, 'complete', 'Analyses Complete');
@@ -879,9 +1113,13 @@ class AutomationManager {
   // NEW METHOD: Perform actual cleanup
   async performCleanup(tabId, automationId) {
       try {
+          // Clean up tab-specific state
           this.cleanupTabState(tabId);
+
+          // Clean up automation data
           await browser.storage.local.remove(`automation_${automationId}`);
 
+          // Clean up prompt results
           const allKeys = Object.keys(await browser.storage.local.get());
           const keysToRemove = allKeys.filter(key =>
               key.startsWith(`promptResult_${automationId}_`)
@@ -890,8 +1128,27 @@ class AutomationManager {
               await browser.storage.local.remove(keysToRemove);
           }
 
+          // Clean up document data (both background and popup versions)
+          const documentKeys = allKeys.filter(key =>
+              key.startsWith(`backgroundDocument_tab_${tabId}`) ||
+              key.startsWith(`popupDocument_tab_${tabId}`)
+          );
+          if (documentKeys.length) {
+              await browser.storage.local.remove(documentKeys);
+              this.log(`Removed ${documentKeys.length} document storage keys for tab ${tabId}`);
+          }
+
+          // Clean up tab-specific document manager
+          if (this.tabDocumentManagers.has(tabId)) {
+              const manager = this.tabDocumentManagers.get(tabId);
+              manager.clearDocument();
+              this.tabDocumentManagers.delete(tabId);
+          }
+
+          // Clean up download tracking
           this.downloadTracking.delete(automationId);
-          this.log(`Cleanup complete for automation ${automationId}`);
+
+          this.log(`Complete cleanup finished for automation ${automationId} on tab ${tabId}`);
       } catch (err) {
           this.logError(`Error during cleanup for ${automationId}:`, err);
       }
@@ -1398,12 +1655,37 @@ class AutomationManager {
 
   // Clean up tab state when tab is removed
   cleanupTabState(tabId) {
+    // Clear any active timeouts
     this.clearTabTimeout(tabId);
-    this.tabAutomations.delete(tabId);
-    this.tabDocumentManagers.delete(tabId);
+
+    // Clear tab automation state
+    const tabState = this.tabAutomations.get(tabId);
+    if (tabState) {
+      // Clear any processing sets to free memory
+      if (tabState.processingCompletions) {
+        tabState.processingCompletions.clear();
+      }
+      if (tabState.completedPrompts) {
+        tabState.completedPrompts.clear();
+      }
+      if (tabState.processedResults) {
+        tabState.processedResults.length = 0;
+      }
+      this.tabAutomations.delete(tabId);
+    }
+
+    // Clear document manager and force cleanup
+    const docManager = this.tabDocumentManagers.get(tabId);
+    if (docManager) {
+      docManager.clearDocument();
+      this.tabDocumentManagers.delete(tabId);
+    }
+
+    // Clear company name and timeouts
     this.tabCompanyNames.delete(tabId);
     this.tabTimeouts.delete(tabId);
-    this.log(`Cleaned up state for tab ${tabId}`);
+
+    this.log(`Thorough cleanup completed for tab ${tabId}`);
   }
 }
 

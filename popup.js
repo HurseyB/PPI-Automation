@@ -206,6 +206,7 @@ class PerplexityAutomator {
 
       // Initialize notification elements
       this.enableNotifications = document.getElementById('enableNotifications');
+      this.autoDownloadDocx = document.getElementById('autoDownloadDocx');
 
       // Log missing elements for debugging
         if (!this.resetAutomationBtn) {
@@ -223,6 +224,7 @@ class PerplexityAutomator {
 
       // Load notification settings
       this.loadNotificationSettings();
+      this.loadAutoDownloadSettings();
     }
 
     async loadNotificationSettings() {
@@ -276,6 +278,32 @@ class PerplexityAutomator {
         } catch (error) {
             console.error('Failed to check notification availability:', error);
         }
+    }
+
+    async loadAutoDownloadSettings() {
+      try {
+        const result = await browser.storage.local.get(['autoDownloadSettings']);
+        const settings = result.autoDownloadSettings || { enabled: true };
+
+        if (this.autoDownloadDocx) {
+          this.autoDownloadDocx.checked = settings.enabled;
+        }
+      } catch (error) {
+        console.error('Failed to load auto-download settings:', error);
+      }
+    }
+
+    async saveAutoDownloadSettings() {
+      try {
+        const settings = {
+          enabled: this.autoDownloadDocx ? this.autoDownloadDocx.checked : true
+        };
+
+        await browser.storage.local.set({ autoDownloadSettings: settings });
+        console.log('Auto-download settings saved:', settings);
+      } catch (error) {
+        console.error('Failed to save auto-download settings:', error);
+      }
     }
 
 
@@ -361,16 +389,26 @@ class PerplexityAutomator {
         this.enableNotifications.addEventListener('change', () => this.saveNotificationSettings());
       }
 
+      // Auto-download settings
+      if (this.autoDownloadDocx) {
+        this.autoDownloadDocx.addEventListener('change', () => this.saveAutoDownloadSettings());
+      }
+
       // Persist company name on change
       if (this.companyNameInput) {
         this.companyNameInput.addEventListener('input', async () => {
           // Get current tab and update title immediately
           const companyName = this.companyNameInput.value.trim();
 
+          console.log('🏢 User typed company name:', companyName);
+
           this.documentManager.companyName = companyName || 'Company';
           this.documentManager.updateDocumentTitle();
 
+          console.log('🏢 DocumentManager companyName set to:', this.documentManager.companyName);
+
           // Update tab title in real-time
+          console.log('🏢 About to call updateTabTitle with:', companyName);
           await this.updateTabTitle(companyName);
 
           // Save only the companyName in UI state
@@ -418,11 +456,19 @@ class PerplexityAutomator {
     async updateTabTitle(companyName) {
       try {
         const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-        await browser.runtime.sendMessage({
+        console.log('🏢 Sending update-tab-title message:', {
           type: 'update-tab-title',
           tabId: tab.id,
           companyName: companyName || ''
         });
+
+        const response = await browser.runtime.sendMessage({
+          type: 'update-tab-title',
+          tabId: tab.id,
+          companyName: companyName || ''
+        });
+
+        console.log('🏢 update-tab-title response:', response);
       } catch (error) {
         console.error('Failed to update tab title:', error);
       }
@@ -532,7 +578,9 @@ class PerplexityAutomator {
     }
 
 
-    handleAutomationComplete(data) {
+    async handleAutomationComplete(data) {
+      console.log('🚀 handleAutomationComplete called with data:', data);
+
       this.isRunning = false;
       this.updateAutomationButton();
 
@@ -551,6 +599,41 @@ class PerplexityAutomator {
       this.documentManager.finalizeDocument(data.summary);
       this.updateDocumentStatus('ready', 'Document ready for download');
       this.enableDownloadButtons();
+
+      // NEW: Check if auto-download is enabled and download automatically
+      if (this.documentManager.hasResponses()) {
+        // Check auto-download setting
+        const autoDownloadEnabled = this.autoDownloadDocx ? this.autoDownloadDocx.checked : true;
+
+        if (autoDownloadEnabled) {
+          try {
+            this.updateDocumentStatus('downloading', 'Starting automatic download...');
+            this.logMessage('🔽 Starting automatic download...');
+
+            // Automatically trigger download with automation ID for tracking
+            const automationId = data.automationId;
+            await this.documentManager.downloadDocx(automationId);
+
+            this.logMessage('✅ Document downloaded automatically');
+            this.updateDocumentStatus('downloaded', 'Document downloaded successfully');
+            this.showNotification('Document downloaded automatically', 'success');
+          } catch (error) {
+            console.error('Automatic download failed:', error);
+            this.logMessage('❌ Automatic download failed - you can still download manually');
+            this.updateDocumentStatus('ready', 'Document ready for manual download');
+            this.showNotification('Automatic download failed - download manually', 'warning');
+          }
+        } else {
+          // Auto-download disabled - just mark as ready
+          this.updateDocumentStatus('ready', 'Document ready for manual download');
+          this.logMessage('📄 Document ready - auto-download disabled');
+        }
+      }
+
+      // NEW: Send completion email notification if enabled
+      console.log('🔔 About to call sendCompletionEmail');
+      await this.sendCompletionEmail(data);
+      console.log('🔔 sendCompletionEmail completed');
 
       // Persist final state
       this.saveUIState({
@@ -663,7 +746,7 @@ class PerplexityAutomator {
     // NEW: Document management methods
     updateDocumentStatus(status, message) {
         this.documentStatus.textContent = message;
-        this.documentStatus.className = `status status--${status === 'error' ? 'error' : status === 'ready' ? 'success' : 'info'}`;
+        this.documentStatus.className = `status status--${status === 'error' ? 'error' : status === 'ready' ? 'success' : status === 'cleared' ? 'info' : status === 'downloaded' ? 'success' : status === 'downloading' ? 'info' : 'info'}`;
     }
 
     updateResponseCount() {
@@ -743,6 +826,56 @@ class PerplexityAutomator {
       } catch (error) {
         // Fallback to console if notifications fail
         console.log(`[${type.toUpperCase()}] ${message}`);
+      }
+    }
+
+    async sendCompletionEmail(data) {
+      console.log('📧 sendCompletionEmail started with data:', data);
+      try {
+        // Check if notifications are enabled
+        const notificationsEnabled = this.enableNotifications ? this.enableNotifications.checked : false;
+        console.log('📧 Notifications enabled?', notificationsEnabled);
+        console.log('📧 Enable notifications element:', this.enableNotifications);
+
+        if (!notificationsEnabled) {
+          console.log('Email notifications disabled by user');
+          return;
+        }
+
+        // Get phone number from storage
+        const result = await browser.storage.local.get(['phoneNumber']);
+        console.log('Phone number result:', result);
+
+        if (!result.phoneNumber) {
+          console.log('No phone number configured for email notifications');
+          return;
+        }
+
+        const phoneNumber = result.phoneNumber;
+        const companyName = this.companyNameInput ? this.companyNameInput.value.trim() || 'Company' : 'Company';
+
+        console.log('Sending completion SMS to:', `${phoneNumber}@vtext.com`);
+        console.log('Company name:', companyName);
+
+        // Send SMS-friendly email via background script using EmailJS
+        const response = await browser.runtime.sendMessage({
+          type: 'send-email',
+          emailData: {
+            to: `${phoneNumber}@vtext.com`,
+            companyName: companyName
+          }
+        });
+
+        if (response.success) {
+          console.log('Completion email sent successfully');
+          this.logMessage('📧 Completion email sent to ' + phoneNumber);
+        } else {
+          throw new Error(response.error || 'Email service returned error');
+        }
+
+      } catch (error) {
+        console.error('Failed to send completion email:', error);
+        this.logMessage('❌ Failed to send completion email: ' + error.message);
       }
     }
 
@@ -844,12 +977,18 @@ class PerplexityAutomator {
             }
 
             const companyName = this.companyNameInput ? this.companyNameInput.value.trim() : '';
+
+            console.log('🚀 Starting automation with company name:', companyName);
+            console.log('🚀 Company name input value:', this.companyNameInput ? this.companyNameInput.value : 'NO INPUT ELEMENT');
+
             this.documentManager.companyName = companyName || 'Company';
             this.documentManager.updateDocumentTitle(); // ← ADD THIS LINE
             // Update tab title when starting automation
             if (companyName) {
+              console.log('🚀 Calling updateTabTitle during automation start with:', companyName);
               await this.updateTabTitle(companyName);
-
+            } else {
+              console.log('🚀 No company name provided, not updating tab title');
             }
             const promptsToSend = this.prompts.map(prompt => {
               // prompt is now an object with { text, pauseAfter }
@@ -860,6 +999,13 @@ class PerplexityAutomator {
                 txt = txt.replace(/\[Company Name\]/g, companyName);
               }
               return { text: txt, pauseAfter: !!prompt.pauseAfter };
+            });
+
+            console.log('🚀 Sending start-automation message with:', {
+              type: 'start-automation',
+              prompts: promptsToSend.length,
+              tabId: tab.id,
+              companyName: companyName || ''
             });
 
             await browser.runtime.sendMessage({
@@ -1022,7 +1168,7 @@ class DocumentManager {
         this.companyName = 'Company';
         this.tabId = null; // Track which tab this belongs to
         this.document = {
-            title: `Business Analyses for Company`,
+            title: `Business Analyses for ${this.companyName || 'Company'}`,
             timestamp: null,
             responses: [],
             summary: null
@@ -1153,7 +1299,7 @@ class DocumentManager {
 
     clearDocument() {
         this.document = {
-            title: `Business Analyses for Company`,
+            title: `Business Analyses for ${this.companyName || 'Company'}`,
             timestamp: null,
             responses: [],
             summary: null
@@ -1194,7 +1340,7 @@ class DocumentManager {
             });
 
             // Use the companyName stored in this DocumentManager instance for filename prefix
-            const safeName = (this.companyName || 'Company')
+            const safeName = (this.companyName || 'Company').replace(/[^a-zA-Z0-9-_]/g, '');
 
             // 2. Format date/time as MM.DD.YYYY-HH.MM.SS
             const now = new Date();
@@ -1202,8 +1348,8 @@ class DocumentManager {
             const datePart = `${pad2(now.getMonth()+1)}.${pad2(now.getDate())}.${now.getFullYear()}`;
             const timePart = `${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}`;
 
-            // 3. Build filename
-            const filename = `Company-${datePart}-${timePart}.docx`;
+            // 3. Build filename using company name and underscore format
+            const filename = `${safeName}_${datePart}_${timePart}.docx`;
 
             const url = URL.createObjectURL(docxBlob);
             const a = document.createElement('a');
@@ -1215,6 +1361,9 @@ class DocumentManager {
             URL.revokeObjectURL(url);
 
             console.log('HTML-formatted DOCX downloaded successfully:', filename);
+
+            // NEW: Clear document data from memory immediately after successful download
+            this.clearDocumentFromMemory();
 
             // NEW: Notify background that download completed
             if (automationId) {
@@ -1234,8 +1383,47 @@ class DocumentManager {
     }
 
     updateDocumentTitle() {
-        this.document.title = `Business Analyses for Company`;
+        this.document.title = `Business Analyses for ${this.companyName || 'Company'}`;
         this.saveDocumentState();
+    }
+
+    /**
+     * Clear document data from memory after download completion
+     * This helps free up RAM and cache space
+     */
+    clearDocumentFromMemory() {
+        try {
+            // Clear large data structures from memory
+            if (this.document.responses) {
+                this.document.responses.forEach(response => {
+                    // Clear large response text content
+                    if (response.responseText) {
+                        response.responseText = null;
+                    }
+                    if (response.contentHash) {
+                        response.contentHash = null;
+                    }
+                });
+            }
+
+            // Clear document summary
+            if (this.document.summary) {
+                this.document.summary = null;
+            }
+
+            // Force garbage collection hint
+            if (window.gc) {
+                window.gc();
+            }
+
+            console.log('Document data cleared from memory after download');
+
+            // Update UI to reflect that data has been cleared
+            this.updateDocumentStatus('cleared', 'Document downloaded and cleared from memory');
+
+        } catch (error) {
+            console.warn('Error clearing document from memory:', error);
+        }
     }
 
     /**
@@ -1693,8 +1881,13 @@ class DocumentManager {
             const blob = await Packer.toBlob(doc);
 
             const url = URL.createObjectURL(blob);
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const filename = `Company-${datePart}-${timePart}.docx`;
+            // Generate timestamp for fallback filename
+            const now = new Date();
+            const pad2 = n => String(n).padStart(2,'0');
+            const datePart = `${pad2(now.getMonth()+1)}.${pad2(now.getDate())}.${now.getFullYear()}`;
+            const timePart = `${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}`;
+            const safeName = (this.companyName || 'Company').replace(/[^a-zA-Z0-9-_]/g, '');
+            const filename = `${safeName}_${datePart}_${timePart}.docx`;
 
             const a = document.createElement('a');
             a.href = url;
@@ -1705,6 +1898,9 @@ class DocumentManager {
             URL.revokeObjectURL(url);
 
             console.log('DOCX downloaded successfully:', filename);
+
+            // NEW: Clear document data from memory immediately after successful download
+            this.clearDocumentFromMemory();
 
         } catch (error) {
             console.error('Failed to generate DOCX:', error);

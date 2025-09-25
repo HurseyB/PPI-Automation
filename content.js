@@ -433,6 +433,13 @@ class PerplexityAutomator {
         case 'hide-status-overlay':
           this.hideStatusOverlay();
           break;
+        case 'collect-latest-response':
+          this.collectLatestResponse().then(responseText => {
+            sendResponse({ responseText });
+          }).catch(error => {
+            sendResponse({ error: error.message });
+          });
+          return true; // Keep message channel open for async response
       }
       sendResponse({ success: true });
       return true;
@@ -509,20 +516,33 @@ class PerplexityAutomator {
     this.hasCompletedCurrentPrompt = false;
     const startTime = Date.now();
 
-    try {
+    // BEGIN REPLACEMENT - never fail, wait indefinitely
       await this.processPrompt(prompt);
-      const { responseText, error } = await this.waitForResponseText(this.responseTimeout);
-      if (error) throw new Error(error);
 
+      let responseText;
+      // Loop indefinitely until responseText is non-empty
+      while (true) {
+        const result = await this.waitForResponseText(this.responseTimeout);
+        // If the helper returns an error, ignore it and continue waiting
+        if (result.error) {
+          console.log(`Response not yet available (ignored error: ${result.error}), continuing to wait`);
+          continue;
+        }
+        responseText = result.responseText;
+        if (responseText && responseText.trim().length > 0) {
+          break;
+        }
+        // No response yet, continue waiting
+
+      }
+
+      // Send completion once responseText is obtained
       await browser.runtime.sendMessage({
         type: 'prompt-completed',
         result: { index, prompt, timestamp: Date.now(), success: true, response: responseText, startTime }
       });
-    } catch (err) {
-      await browser.runtime.sendMessage({ type: 'prompt-failed', error: err.message, promptIndex: index });
-    } finally {
+      // END REPLACEMENT
       this.isExecuting = false;
-    }
   }
 
   async processPrompt(prompt) {
@@ -538,13 +558,31 @@ class PerplexityAutomator {
   }
 
   async waitForPageToSettle() {
+    // Enhanced waiting logic that works in background tabs
     let attempts = 0;
     while (attempts++ < 10) {
       const loading = document.querySelectorAll('[role="progressbar"], [aria-busy="true"], .Loader, svg[aria-label="Loading"], [data-testid*="spinner"], [data-testid*="loading"]');
       if (loading.length === 0) break;
       await this.sleep(500);
     }
+
+    // Additional stability check
     await this.sleep(1000);
+
+    // Ensure document is fully loaded (important for background tabs)
+    if (document.readyState !== 'complete') {
+      await new Promise(resolve => {
+        if (document.readyState === 'complete') {
+          resolve();
+        } else {
+          document.addEventListener('readystatechange', () => {
+            if (document.readyState === 'complete') {
+              resolve();
+            }
+          });
+        }
+      });
+    }
   }
 
   async waitForInputElement(timeout = this.waitTimeout) {
@@ -558,8 +596,23 @@ class PerplexityAutomator {
   }
 
   isVisible(el) {
+    // Enhanced visibility check that works in background tabs
     const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    const style = window.getComputedStyle(el);
+
+    // Basic size check
+    if (rect.width === 0 && rect.height === 0) return false;
+
+    // Check if element is hidden by CSS
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+
+    // Check if element has content (works in background tabs)
+    if (el.textContent && el.textContent.trim().length === 0) return false;
+
+    // For background tabs, also check if element exists in DOM and is not hidden by opacity
+    if (style.opacity === '0') return false;
+
+    return true;
   }
 
   isLikelySubmitButton(el) {
@@ -585,9 +638,35 @@ class PerplexityAutomator {
   }
 
   async clickSubmit(el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await this.sleep(200);
-    el.click();
+    // Enhanced clicking that works in background tabs
+    try {
+      // Try to scroll element into view (may not work in background tabs, but won't break)
+      if (el.scrollIntoView) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      await this.sleep(200);
+
+      // Multiple click strategies for reliability in background tabs
+      if (el.click && typeof el.click === 'function') {
+        el.click();
+      } else {
+        // Fallback: dispatch click event manually
+        const clickEvent = new MouseEvent('click', {
+          view: window,
+          bubbles: true,
+          cancelable: true
+        });
+        el.dispatchEvent(clickEvent);
+      }
+    } catch (error) {
+      console.warn('Click failed, trying alternative approach:', error);
+      // Final fallback: try to trigger any onclick or form submission
+      if (el.onclick) {
+        el.onclick();
+      } else if (el.form && el.form.submit) {
+        el.form.submit();
+      }
+    }
   }
 
   async waitForResponseText(timeout) {
@@ -631,12 +710,32 @@ class PerplexityAutomator {
           const htmlContent = this.extractHTMLContent(responseElement);
           const textLength = responseElement.innerText.trim().length;
 
+          // Enhanced stability detection for research prompts
           if (textLength === lastLen && textLength > 0) {
-            if (++stable >= 3) {
-              return resolve({
-                responseText: htmlContent,
-                startTime: start
-              });
+            stable++;
+
+            // Increased stability requirements:
+            // - Minimum 8 consecutive stable checks (was 3)
+            // - Minimum response length of 100 characters for research prompts
+            // - Additional wait time for longer responses (research usually produces more content)
+            const minStableChecks = textLength > 500 ? 12 : 8; // More checks for longer responses
+            const minResponseLength = 100; // Minimum length to consider complete
+
+            if (stable >= minStableChecks && textLength >= minResponseLength) {
+              // Final validation: wait additional time for research prompts
+              const totalWaitTime = Date.now() - start;
+              const minWaitTime = textLength > 1000 ? 15000 : 10000; // 15s for long responses, 10s for shorter
+
+              if (totalWaitTime >= minWaitTime) {
+                console.log(`Response stable for ${stable} checks (${textLength} chars) after ${totalWaitTime}ms`);
+                return resolve({
+                  responseText: htmlContent,
+                  startTime: start
+                });
+              } else {
+                // Wait a bit more even if stable, for research prompts
+                console.log(`Response stable but waiting minimum time (${totalWaitTime}/${minWaitTime}ms)`);
+              }
             }
           } else {
             lastLen = textLength;
@@ -698,6 +797,80 @@ class PerplexityAutomator {
       }
 
       return htmlContent;
+  }
+
+  async collectLatestResponse() {
+    // Enhanced response detection logic - gets the most recent response on the page
+    // Use timestamp-based detection to avoid cross-tab interference
+    const collectionStartTime = Date.now();
+
+    const strategies = [
+      // Modern markdown content (highest priority)
+      () => this.findLatestMarkdownResponse(new Set()),
+
+      // Fallback strategies with enhanced recency detection
+      () => {
+        const responseElements = Array.from(document.querySelectorAll(
+          this.adaptiveSelector.strategies.responseContainer.join(',')
+        ));
+        return responseElements.reverse().find(el =>
+          this.isVisible(el) &&
+          el.textContent.trim().length > 50 &&
+          this.isRecentElement(el, collectionStartTime)
+        );
+      },
+
+      // Last resort - any visible text content that looks like a response
+      () => {
+        const allElements = Array.from(document.querySelectorAll('div, p, article, section'));
+        return allElements.reverse().find(el =>
+          this.isVisible(el) &&
+          el.textContent.trim().length > 100 &&
+          !el.querySelector('input, button, form') &&
+          this.isRecentElement(el, collectionStartTime)
+        );
+      }
+    ];
+
+    for (const strategy of strategies) {
+      try {
+        const element = await strategy();
+        if (element) {
+          const responseText = this.extractCleanText(element);
+          if (responseText && responseText.trim().length > 20) {
+            console.log('Latest response collected:', responseText.substring(0, 100) + '...');
+            return responseText;
+          }
+        }
+      } catch (error) {
+        console.warn('Response collection strategy failed:', error);
+        continue;
+      }
+    }
+
+    throw new Error('No response found on page');
+  }
+
+  isRecentElement(element, referenceTime, maxAgeMs = 60000) {
+    // Check if element appears to be recent based on DOM position and attributes
+    // This helps avoid selecting stale responses in multi-tab scenarios
+    try {
+      // Elements that appear later in DOM are typically more recent
+      const allSimilarElements = Array.from(
+        document.querySelectorAll(element.tagName.toLowerCase())
+      );
+      const elementIndex = allSimilarElements.indexOf(element);
+      const isInLatterHalf = elementIndex > allSimilarElements.length * 0.5;
+
+      // Additional heuristics for recency
+      const hasRecentTimestamp = element.querySelector('[title*="ago"], [data-timestamp]');
+      const hasHighId = element.id && parseInt(element.id.match(/\d+$/)?.[0]) > 0;
+
+      return isInLatterHalf || hasRecentTimestamp || hasHighId;
+    } catch (error) {
+      // If we can't determine recency, assume it's recent to avoid false negatives
+      return true;
+    }
   }
 
   sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

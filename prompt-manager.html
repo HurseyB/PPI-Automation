@@ -57,6 +57,35 @@
                 </div>
             </section>
 
+            <!-- Notification Settings Section -->
+            <section class="notification-settings-section card">
+                <div class="card__body">
+                    <h3>Notification Settings</h3>
+                    <div class="form-group">
+                        <label for="phoneNumberInput" class="form-label">Phone Number (for email notifications)</label>
+                        <input
+                            type="tel"
+                            id="phoneNumberInput"
+                            class="form-control"
+                            placeholder="Enter 10-digit phone number (e.g., 1234567890)"
+                            pattern="[0-9]{10}"
+                            maxlength="10"
+                        >
+                        <small class="form-help">Email will be sent to: [phone]@vtext.com</small>
+                    </div>
+                    <div class="form-group">
+                        <button id="savePhoneBtn" class="btn btn-primary">
+                            <span class="btn-icon">💾</span>
+                            Save Phone Number
+                        </button>
+                        <button id="testEmailBtn" class="btn btn-secondary">
+                            <span class="btn-icon">📧</span>
+                            Test Email
+                        </button>
+                    </div>
+                </div>
+            </section>
+
             <!-- Prompts Management Section -->
             <section class="prompts-management-section">
                 <div class="section-header">
